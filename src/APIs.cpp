@@ -1,156 +1,260 @@
-
 #include "globals.h"
+#include <curl/curl.h>
+#include <json-c/json.h>
 
 extern Weather weather;
 extern UV uv;
 extern Solar solar;
-extern Preferences storage;
 extern struct tm timeinfo;
 
-extern HTTPClient http;
+extern pthread_mutex_t httpMutex;
+
 #define SOLAR_TOKEN_LENGTH 2048
 char solar_token[SOLAR_TOKEN_LENGTH] = {0};
-
-// The semaphore to protect the HTTPClient object
-extern SemaphoreHandle_t httpMutex;
 
 const size_t JSON_PAYLOAD_SIZE = 4096;
 char payload_buffer[JSON_PAYLOAD_SIZE] = {0};
 const size_t URL_BUFFER_SIZE = 512;
-char url_buffer[URL_BUFFER_SIZE]  = {0};
+char url_buffer[URL_BUFFER_SIZE] = {0};
 const size_t POST_BUFFER_SIZE = 512;
 char post_buffer[POST_BUFFER_SIZE] = {0};
 
+// Callback structure for libcurl
+struct MemoryStruct {
+    char *memory;
+    size_t size;
+};
+
+// Callback function to receive HTTP response data
+static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t realsize = size * nmemb;
+    struct MemoryStruct *mem = (struct MemoryStruct *)userp;
+    
+    char *ptr = (char*)realloc(mem->memory, mem->size + realsize + 1);
+    if(!ptr) {
+        printf("Not enough memory (realloc returned NULL)\n");
+        return 0;
+    }
+    
+    mem->memory = ptr;
+    memcpy(&(mem->memory[mem->size]), contents, realsize);
+    mem->size += realsize;
+    mem->memory[mem->size] = 0;
+    
+    return realsize;
+}
+
 // Get UV from weatherbit.io
-void get_uv_t(void* pvParameters) {
+void* get_uv_t(void* pvParameters) {
+    (void)pvParameters;
     while (true) {
         if (weather.isDay) {
             if (time(NULL) - uv.updateTime > UV_UPDATE_INTERVAL_SEC) {
-                if (WiFi.status() == WL_CONNECTED) {
-                    if (xSemaphoreTake(httpMutex, pdMS_TO_TICKS(API_SEMAPHORE_WAIT_SEC * 1000)) == pdTRUE) {
-                        snprintf(url_buffer, URL_BUFFER_SIZE, "https://api.weatherbit.io/v2.0/current?city_id=%s&key=%s", WEATHERBIT_CITY_ID, WEATHERBIT_API);
-                        http.begin(url_buffer);
-                        int httpCode = http.GET();
-                        if (httpCode == HTTP_CODE_OK) {
-                            String payload = http.getString();
-                            if (payload.length() > 0) {
-                                JsonDocument root;
-                                deserializeJson(root, payload);
-                                float UV = root["data"][0]["uv"];
-                                uv.index = UV;
-                                uv.updateTime = time(NULL);
-                                logAndPublish("UV updated");
-                                strftime(uv.time_string, CHAR_LEN, "%H:%M:%S", &timeinfo);
-                                saveDataBlock(UV_DATA_FILENAME, &uv, sizeof(uv));
+                pthread_mutex_lock(&httpMutex);
+                
+                snprintf(url_buffer, URL_BUFFER_SIZE, 
+                         "https://api.weatherbit.io/v2.0/current?city_id=%s&key=%s", 
+                         WEATHERBIT_CITY_ID, WEATHERBIT_API);
+                
+                CURL *curl = curl_easy_init();
+                if(curl) {
+                    struct MemoryStruct chunk;
+                    chunk.memory = (char*)malloc(1);
+                    chunk.size = 0;
+                    
+                    curl_easy_setopt(curl, CURLOPT_URL, url_buffer);
+                    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+                    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+                    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+                    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+                    
+                    CURLcode res = curl_easy_perform(curl);
+                    
+                    if(res == CURLE_OK) {
+                        long response_code;
+                        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+                        
+                        if(response_code == 200 && chunk.size > 0) {
+                            struct json_object *root = json_tokener_parse(chunk.memory);
+                            
+                            if(root != NULL) {
+                                struct json_object *data_array;
+                                if(json_object_object_get_ex(root, "data", &data_array)) {
+                                    struct json_object *first_element = json_object_array_get_idx(data_array, 0);
+                                    if(first_element) {
+                                        struct json_object *uv_obj;
+                                        if(json_object_object_get_ex(first_element, "uv", &uv_obj)) {
+                                            uv.index = json_object_get_double(uv_obj);
+                                            uv.updateTime = time(NULL);
+                                            logAndPublish("UV updated");
+                                            strftime(uv.time_string, CHAR_LEN, "%H:%M:%S", &timeinfo);
+                                            saveDataBlock(UV_DATA_FILENAME, &uv, sizeof(uv));
+                                        }
+                                    }
+                                }
+                                json_object_put(root);
                             } else {
-                                logAndPublish("UV update failed: Payload read error");
-                                uv.updateTime = time(NULL); // Prevents constant calls if the API is down and testing for parsing
+                                logAndPublish("UV update failed: JSON parse error");
+                                uv.updateTime = time(NULL);
                             }
-                            http.end();
-                            xSemaphoreGive(httpMutex);
                         } else {
                             char log_message[CHAR_LEN];
-                            snprintf(log_message, CHAR_LEN, "[HTTP] GET UV failed, error code is %d", httpCode);
+                            snprintf(log_message, CHAR_LEN, "[HTTP] GET UV failed, response code: %ld", response_code);
                             errorPublish(log_message);
-                            http.end();
-                            xSemaphoreGive(httpMutex);
-                            logAndPublish("UV updated failed");
-                            vTaskDelay(pdMS_TO_TICKS(API_FAIL_DELAY_SEC * 1000)); // Stop calling too often for errors
+                            logAndPublish("UV update failed");
+                            usleep(API_FAIL_DELAY_SEC * 1000000);
                         }
+                    } else {
+                        char log_message[CHAR_LEN];
+                        snprintf(log_message, CHAR_LEN, "[HTTP] GET UV failed: %s", curl_easy_strerror(res));
+                        errorPublish(log_message);
+                        logAndPublish("UV update failed");
+                        usleep(API_FAIL_DELAY_SEC * 1000000);
                     }
+                    
+                    free(chunk.memory);
+                    curl_easy_cleanup(curl);
                 }
+                
+                pthread_mutex_unlock(&httpMutex);
             }
         } else {
             uv.index = 0.0;
-            if (weather.updateTime > 0) { // Only update if the weather is valid so
-                // the day / night is valid
+            if (weather.updateTime > 0) {
                 uv.updateTime = time(NULL);
             }
             strftime(uv.time_string, CHAR_LEN, "%H:%M:%S", &timeinfo);
             saveDataBlock(UV_DATA_FILENAME, &uv, sizeof(uv));
         }
-        vTaskDelay(pdMS_TO_TICKS(API_LOOP_DELAY_SEC * 1000)); // Check every 10 seconds if an update is needed
+        usleep(API_LOOP_DELAY_SEC * 1000000);
     }
+    return NULL;
 }
 
-void get_weather_t(void* pvParameters) {
+void* get_weather_t(void* pvParameters) {
+    (void)pvParameters;
     while (true) {
         if (time(NULL) - weather.updateTime > WEATHER_UPDATE_INTERVAL_SEC) {
-            if (WiFi.status() == WL_CONNECTED) {
-                if (xSemaphoreTake(httpMutex, pdMS_TO_TICKS(API_SEMAPHORE_WAIT_SEC * 1000)) == pdTRUE) {
-                    snprintf(url_buffer, URL_BUFFER_SIZE,
-                             "https://api.open-meteo.com/v1/"
-                             "forecast?latitude=%s&longitude=%s&daily="
-                             "temperature_2m_"
-                             "max,temperature_2m_min,sunrise,sunset,uv_index_max&models="
-                             "ukmo_uk_"
-                             "deterministic_2km,ncep_gfs013&current=temperature_2m,is_day,"
-                             "weather_code,wind_speed_10m,wind_direction_10m&timezone=auto&"
-                             "forecast_days=1",
-                             LATITUDE, LONGITUDE);
-                    http.begin(url_buffer);
-                    int httpCode = http.GET();
-                    if (httpCode == HTTP_CODE_OK) {
-                        int payload_len = readChunkedPayload(http.getStreamPtr(), payload_buffer, JSON_PAYLOAD_SIZE);
-                        if (payload_len > 0) {
-                            JsonDocument root;
-                            deserializeJson(root, payload_buffer);
+            pthread_mutex_lock(&httpMutex);
+            
+            snprintf(url_buffer, URL_BUFFER_SIZE,
+                     "https://api.open-meteo.com/v1/"
+                     "forecast?latitude=%s&longitude=%s&daily="
+                     "temperature_2m_"
+                     "max,temperature_2m_min,sunrise,sunset,uv_index_max&models="
+                     "ukmo_uk_"
+                     "deterministic_2km,ncep_gfs013&current=temperature_2m,is_day,"
+                     "weather_code,wind_speed_10m,wind_direction_10m&timezone=auto&"
+                     "forecast_days=1",
+                     LATITUDE, LONGITUDE);
+            
+            CURL *curl = curl_easy_init();
+            if(curl) {
+                struct MemoryStruct chunk;
+                chunk.memory = (char*)malloc(1);
+                chunk.size = 0;
+                
+                curl_easy_setopt(curl, CURLOPT_URL, url_buffer);
+                curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+                curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+                curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+                curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+                
+                CURLcode res = curl_easy_perform(curl);
+                
+                if(res == CURLE_OK) {
+                    long response_code;
+                    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+                    
+                    if(response_code == 200 && chunk.size > 0) {
+                        struct json_object *root = json_tokener_parse(chunk.memory);
+                        
+                        if(root != NULL) {
+                            struct json_object *current_obj, *daily_obj;
+                            
+                            if(json_object_object_get_ex(root, "current", &current_obj) &&
+                               json_object_object_get_ex(root, "daily", &daily_obj)) {
+                                
+                                // Get current weather values
+                                struct json_object *temp_obj, *wind_dir_obj, *wind_speed_obj;
+                                struct json_object *is_day_obj, *weather_code_obj;
+                                
+                                json_object_object_get_ex(current_obj, "temperature_2m", &temp_obj);
+                                json_object_object_get_ex(current_obj, "wind_direction_10m", &wind_dir_obj);
+                                json_object_object_get_ex(current_obj, "wind_speed_10m", &wind_speed_obj);
+                                json_object_object_get_ex(current_obj, "is_day", &is_day_obj);
+                                json_object_object_get_ex(current_obj, "weather_code", &weather_code_obj);
+                                
+                                // Get daily values (arrays)
+                                struct json_object *max_temp_array, *min_temp_array;
+                                json_object_object_get_ex(daily_obj, "temperature_2m_max", &max_temp_array);
+                                json_object_object_get_ex(daily_obj, "temperature_2m_min", &min_temp_array);
+                                
+                                if(temp_obj && wind_dir_obj && wind_speed_obj && is_day_obj && 
+                                   weather_code_obj && max_temp_array && min_temp_array) {
+                                    
+                                    float weatherTemperature = json_object_get_double(temp_obj);
+                                    float weatherWindDir = json_object_get_double(wind_dir_obj);
+                                    float weatherWindSpeed = json_object_get_double(wind_speed_obj);
+                                    bool weatherIsDay = json_object_get_boolean(is_day_obj);
+                                    int weatherCode = json_object_get_int(weather_code_obj);
+                                    
+                                    struct json_object *max_temp_0 = json_object_array_get_idx(max_temp_array, 0);
+                                    struct json_object *min_temp_0 = json_object_array_get_idx(min_temp_array, 0);
+                                    float weatherMaxTemp = json_object_get_double(max_temp_0);
+                                    float weatherMinTemp = json_object_get_double(min_temp_0);
 
-                            float weatherTemperature = root["current"]["temperature_2m"];
-                            float weatherWindDir = root["current"]["wind_direction_10m"];
-                            float weatherWindSpeed = root["current"]["wind_speed_10m"];
-                            float weatherMaxTemp = root["daily"]["temperature_2m_max"][0];
-                            float weatherMinTemp = root["daily"]["temperature_2m_min"][0];
-                            bool weatherIsDay = root["current"]["is_day"];
-                            int weatherCode = root["current"]["weather_code"];
+                                    weather.temperature = weatherTemperature;
+                                    weather.windSpeed = weatherWindSpeed;
+                                    weather.maxTemp = weatherMaxTemp;
+                                    weather.minTemp = weatherMinTemp;
+                                    weather.isDay = weatherIsDay;
+                                    snprintf(weather.description, CHAR_LEN, "%s", wmoToText(weatherCode, weatherIsDay));
+                                    snprintf(weather.windDir, CHAR_LEN, "%s", degreesToDirection(weatherWindDir));
 
-                            weather.temperature = weatherTemperature;
-                            weather.windSpeed = weatherWindSpeed;
-                            weather.maxTemp = weatherMaxTemp;
-                            weather.minTemp = weatherMinTemp;
-                            weather.isDay = weatherIsDay;
-                            snprintf(weather.description, CHAR_LEN, "%s", wmoToText(weatherCode, weatherIsDay));
-                            snprintf(weather.windDir, CHAR_LEN, "%s", degreesToDirection(weatherWindDir));
-
-                            weather.updateTime = time(NULL);
-                            strftime(weather.time_string, CHAR_LEN, "%H:%M:%S", &timeinfo);
-                            logAndPublish("Weather updated");
-                            saveDataBlock(WEATHER_DATA_FILENAME, &weather, sizeof(weather));
+                                    weather.updateTime = time(NULL);
+                                    strftime(weather.time_string, CHAR_LEN, "%H:%M:%S", &timeinfo);
+                                    logAndPublish("Weather updated");
+                                    saveDataBlock(WEATHER_DATA_FILENAME, &weather, sizeof(weather));
+                                }
+                            }
+                            json_object_put(root);
                         } else {
-                            logAndPublish("Weather update failed: Payload read error");
+                            logAndPublish("Weather update failed: JSON parse error");
                         }
-                        http.end();
-                        xSemaphoreGive(httpMutex);
-                        logAndPublish("Weather updated");
                     } else {
                         char log_message[CHAR_LEN];
-                        snprintf(log_message, CHAR_LEN, "[HTTP] GET current weather failed, error: %d", httpCode);
+                        snprintf(log_message, CHAR_LEN, "[HTTP] GET weather failed, response code: %ld", response_code);
                         errorPublish(log_message);
-                        logAndPublish("Weather updated failed");
-                        http.end();
-                        xSemaphoreGive(httpMutex);
-                        vTaskDelay(pdMS_TO_TICKS(API_FAIL_DELAY_SEC * 1000)); // Stop calling too often for errors
+                        logAndPublish("Weather update failed");
+                        usleep(API_FAIL_DELAY_SEC * 1000000);
                     }
+                } else {
+                    char log_message[CHAR_LEN];
+                    snprintf(log_message, CHAR_LEN, "[HTTP] GET weather failed: %s", curl_easy_strerror(res));
+                    errorPublish(log_message);
+                    logAndPublish("Weather update failed");
+                    usleep(API_FAIL_DELAY_SEC * 1000000);
                 }
+                
+                free(chunk.memory);
+                curl_easy_cleanup(curl);
             }
+            
+            pthread_mutex_unlock(&httpMutex);
         }
-        vTaskDelay(pdMS_TO_TICKS(API_LOOP_DELAY_SEC * 1000)); // Check every 10 seconds if an update is needed
+        usleep(API_LOOP_DELAY_SEC * 1000000);
     }
+    return NULL;
 }
 
 const char* degreesToDirection(double degrees) {
-    // Normalize the degrees to a 0-360 range
-    // The fmod function handles floating point remainder.
     degrees = fmod(degrees, 360.0);
     if (degrees < 0) {
         degrees += 360.0;
     }
 
-    // Determine the direction based on 45-degree sectors.
-    // We add 22.5 to shift the starting point so that North is centered on 0.
-    // This simplifies the logic by making the ranges positive.
     double shiftedDegrees = degrees + 22.5;
-
     if (shiftedDegrees >= 360) {
         shiftedDegrees -= 360;
     }
@@ -237,388 +341,458 @@ const char* wmoToText(int code, bool isDay) {
     }
 }
 
-void get_solar_token_t(void* pvParameters) {
+void* get_solar_token_t(void* pvParameters) {
+    (void)pvParameters;
     while (true) {
-        // Check if the token is valid (not empty) or if it has expired
         if (strlen(solar_token) == 0) {
-            if (WiFi.status() == WL_CONNECTED) {
-                if (xSemaphoreTake(httpMutex, pdMS_TO_TICKS(API_SEMAPHORE_WAIT_SEC * 1000)) == pdTRUE) {
-                    snprintf(url_buffer, sizeof(url_buffer), "https://%s/account/v1.0/token?appId=%s", SOLAR_URL, SOLAR_APPID);
-                    http.begin(url_buffer);
-                    http.addHeader("Content-Type", "application/json");
-
-                    snprintf(post_buffer, POST_BUFFER_SIZE, "{\n\"appSecret\" : \"%s\", \n\"email\" : \"%s\",\n\"password\" : \"%s\"\n}", SOLAR_SECRET, SOLAR_USERNAME,
-                             SOLAR_PASSHASH);
-                    int httpCode_token = http.POST(post_buffer);
-                    if (httpCode_token == HTTP_CODE_OK) {
-                        int payload_len = readChunkedPayload(http.getStreamPtr(), payload_buffer, JSON_PAYLOAD_SIZE);
-                        if (payload_len > 0) {
-                            JsonDocument root;
-                            deserializeJson(root, payload_buffer);
-                            if (root["access_token"].is<const char*>()) {
-                                const char* rec_token = root["access_token"];
-                                snprintf(solar_token, SOLAR_TOKEN_LENGTH, "bearer %s", rec_token);
-                                logAndPublish("Solar token obtained");
+            pthread_mutex_lock(&httpMutex);
+            
+            snprintf(url_buffer, sizeof(url_buffer), 
+                     "https://%s/account/v1.0/token?appId=%s", 
+                     SOLAR_URL, SOLAR_APPID);
+            
+            CURL *curl = curl_easy_init();
+            if(curl) {
+                struct MemoryStruct chunk;
+                chunk.memory = (char*)malloc(1);
+                chunk.size = 0;
+                
+                struct curl_slist *headers = NULL;
+                headers = curl_slist_append(headers, "Content-Type: application/json");
+                
+                snprintf(post_buffer, POST_BUFFER_SIZE, 
+                         "{\"appSecret\":\"%s\",\"email\":\"%s\",\"password\":\"%s\"}", 
+                         SOLAR_SECRET, SOLAR_USERNAME, SOLAR_PASSHASH);
+                
+                curl_easy_setopt(curl, CURLOPT_URL, url_buffer);
+                curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_buffer);
+                curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+                curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+                curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+                
+                CURLcode res = curl_easy_perform(curl);
+                
+                if(res == CURLE_OK) {
+                    long response_code;
+                    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+                    
+                    if(response_code == 200 && chunk.size > 0) {
+                        struct json_object *root = json_tokener_parse(chunk.memory);
+                        
+                        if(root != NULL) {
+                            struct json_object *token_obj;
+                            if(json_object_object_get_ex(root, "access_token", &token_obj)) {
+                                if(json_object_is_type(token_obj, json_type_string)) {
+                                    const char* rec_token = json_object_get_string(token_obj);
+                                    snprintf(solar_token, SOLAR_TOKEN_LENGTH, "bearer %s", rec_token);
+                                    logAndPublish("Solar token obtained");
+                                }
                             } else {
-                                char log_message[CHAR_LEN];
-                                snprintf(log_message, CHAR_LEN, "Solar token error: %s", root["msg"].as<const char*>());
-                                errorPublish(log_message);
-                            }
-                        } else {
-                            logAndPublish("Solar token failed: Payload read error");
-                        }
-                    } else {
-                        char log_message[CHAR_LEN];
-                        snprintf(log_message, CHAR_LEN, "[HTTP] GET solar token failed, error: %s", http.errorToString(httpCode_token).c_str());
-                        errorPublish(log_message);
-                    }
-                    http.end();
-                    xSemaphoreGive(httpMutex);
-                }
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(API_LOOP_DELAY_SEC * 1000)); // Check for token every 10 seconds
-    }
-}
-
-// Get current solar values from Solarman
-void get_current_solar_t(void* pvParameters) {
-
-    while (true) {
-        if (time(NULL) - solar.currentUpdateTime > SOLAR_CURRENT_UPDATE_INTERVAL_SEC) {
-            // First, check if the token is available
-            if (strlen(solar_token) == 0) {
-                vTaskDelay(pdMS_TO_TICKS(SOLAR_TOKEN_WAIT_SEC * 1000));
-                continue; // Skip this loop iteration and try again after a short delay
-            }
-
-            if (WiFi.status() == WL_CONNECTED) {
-                if (xSemaphoreTake(httpMutex, pdMS_TO_TICKS(API_SEMAPHORE_WAIT_SEC * 1000)) == pdTRUE) {
-                    snprintf(url_buffer, URL_BUFFER_SIZE, "https://%s/station/v1.0/realTime?language=en", SOLAR_URL);
-                    http.begin(url_buffer);
-                    http.addHeader("Content-Type", "application/json");
-                    http.addHeader("Authorization", solar_token);
-                    snprintf(post_buffer, POST_BUFFER_SIZE, "{\n\"stationId\" : \"%s\"\n}", SOLAR_STATIONID);
-                    int httpCode = http.POST(post_buffer);
-
-                    if (httpCode == HTTP_CODE_OK) {
-                        int content_length = http.getSize();
-                        int payload_len = readFixedLengthPayload(http.getStreamPtr(), payload_buffer, JSON_PAYLOAD_SIZE, content_length);
-                        if (payload_len > 0) {
-                            JsonDocument root;
-                            deserializeJson(root, payload_buffer);
-                            bool rec_success = root["success"];
-                            if (rec_success == true) {
-                                float rec_batteryCharge = root["batterySoc"];
-                                float rec_usingPower = root["usePower"];
-                                float rec_gridPower = root["wirePower"];
-                                float rec_batteryPower = root["batteryPower"];
-                                time_t rec_time = root["lastUpdateTime"];
-                                float rec_solarPower = root["generationPower"];
-
-                                struct tm ts;
-                                char time_buf[CHAR_LEN];
-
-                                //rec_time += TIME_OFFSET;
-                                localtime_r(&rec_time, &ts);
-                                strftime(time_buf, sizeof(time_buf), "%H:%M:%S", &ts);
-                                solar.currentUpdateTime = time(NULL);
-                                solar.solarPower = rec_solarPower / 1000;
-                                solar.batteryPower = rec_batteryPower / 1000;
-                                solar.usingPower = rec_usingPower / 1000;
-                                solar.batteryCharge = rec_batteryCharge;
-                                solar.gridPower = rec_gridPower / 1000;
-                                snprintf(solar.time, CHAR_LEN, "%s", time_buf);
-
-                                // Reset at midnight
-                                if (timeinfo.tm_hour == 0 && solar.minmax_reset == false) {
-                                    solar.today_battery_min = 100;
-                                    solar.today_battery_max = 0;
-                                    solar.minmax_reset = true;
-                                    storage.begin("KO");
-                                    storage.remove("solarmin");
-                                    storage.remove("solarmmax");
-                                    storage.putFloat("solarmin", solar.today_battery_min);
-                                    storage.putFloat("solarmax", solar.today_battery_max);
-                                    storage.end();
-                                } else {
-                                    if (timeinfo.tm_hour != 0) {
-                                        solar.minmax_reset = false;
-                                    }
-                                }
-                                // Set minimum
-                                if ((solar.batteryCharge < solar.today_battery_min) && solar.batteryCharge != 0) {
-                                    solar.today_battery_min = solar.batteryCharge;
-                                    storage.begin("KO");
-                                    storage.remove("solarmin");
-                                    storage.putFloat("solarmin", solar.today_battery_min);
-                                    storage.end();
-                                }
-                                // Set maximum
-                                if (solar.batteryCharge > solar.today_battery_max) {
-                                    solar.today_battery_max = solar.batteryCharge;
-                                    storage.begin("KO");
-                                    storage.remove("solarmax");
-                                    storage.putFloat("solarmax", solar.today_battery_max);
-                                    storage.end();
-                                }
-                                logAndPublish("Solar status updated");
-                                saveDataBlock(SOLAR_DATA_FILENAME, &solar, sizeof(solar));
-                            } else {
-                                const char* msg = root["msg"];
-                                if (msg && strcmp(msg, "auth invalid token") == 0) {
-                                    logAndPublish("Solar token expired, clearing for refresh");
-                                    strcpy(solar_token, ""); // Clear the token to trigger a refresh in the other task
-                                } else {
+                                struct json_object *msg_obj;
+                                if(json_object_object_get_ex(root, "msg", &msg_obj)) {
                                     char log_message[CHAR_LEN];
-                                    snprintf(log_message, CHAR_LEN, "Solar status failed: %s", msg);
+                                    snprintf(log_message, CHAR_LEN, "Solar token error: %s", 
+                                             json_object_get_string(msg_obj));
                                     errorPublish(log_message);
                                 }
                             }
-                        } else {
-                            logAndPublish("Solar status update failed: Payload read error");
+                            json_object_put(root);
                         }
                     } else {
                         char log_message[CHAR_LEN];
-                        snprintf(log_message, CHAR_LEN, "[HTTP] GET solar status failed, error: %d", httpCode);
+                        snprintf(log_message, CHAR_LEN, 
+                                 "[HTTP] GET solar token failed, response code: %ld", response_code);
                         errorPublish(log_message);
-                        vTaskDelay(pdMS_TO_TICKS(API_FAIL_DELAY_SEC * 1000)); // Stop calling too often for errors
                     }
-                    http.end();
-                    xSemaphoreGive(httpMutex);
+                } else {
+                    char log_message[CHAR_LEN];
+                    snprintf(log_message, CHAR_LEN, "[HTTP] GET solar token failed: %s", 
+                             curl_easy_strerror(res));
+                    errorPublish(log_message);
                 }
+                
+                free(chunk.memory);
+                curl_slist_free_all(headers);
+                curl_easy_cleanup(curl);
             }
+            
+            pthread_mutex_unlock(&httpMutex);
         }
-        vTaskDelay(pdMS_TO_TICKS(API_LOOP_DELAY_SEC * 1000)); // Check every 10 seconds if an update is needed
+        usleep(API_LOOP_DELAY_SEC * 1000000);
     }
+    return NULL;
 }
 
 // Get current solar values from Solarman
-void get_daily_solar_t(void* pvParameters) {
+void* get_current_solar_t(void* pvParameters) {
+    (void)pvParameters;
+    while (true) {
+        if (time(NULL) - solar.currentUpdateTime > SOLAR_CURRENT_UPDATE_INTERVAL_SEC) {
+            if (strlen(solar_token) == 0) {
+                usleep(SOLAR_TOKEN_WAIT_SEC * 1000000);
+                continue;
+            }
+
+            pthread_mutex_lock(&httpMutex);
+            
+            snprintf(url_buffer, URL_BUFFER_SIZE, 
+                     "https://%s/station/v1.0/realTime?language=en", SOLAR_URL);
+            
+            CURL *curl = curl_easy_init();
+            if(curl) {
+                struct MemoryStruct chunk;
+                chunk.memory = (char*)malloc(1);
+                chunk.size = 0;
+                
+                struct curl_slist *headers = NULL;
+                headers = curl_slist_append(headers, "Content-Type: application/json");
+                
+                char auth_header[SOLAR_TOKEN_LENGTH + 20];
+                snprintf(auth_header, sizeof(auth_header), "Authorization: %s", solar_token);
+                headers = curl_slist_append(headers, auth_header);
+                
+                snprintf(post_buffer, POST_BUFFER_SIZE, "{\"stationId\":\"%s\"}", SOLAR_STATIONID);
+                
+                curl_easy_setopt(curl, CURLOPT_URL, url_buffer);
+                curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_buffer);
+                curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+                curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+                curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+                
+                CURLcode res = curl_easy_perform(curl);
+                
+                if(res == CURLE_OK) {
+                    long response_code;
+                    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+                    
+                    if(response_code == 200 && chunk.size > 0) {
+                        struct json_object *root = json_tokener_parse(chunk.memory);
+                        
+                        if(root != NULL) {
+                            struct json_object *success_obj;
+                            if(json_object_object_get_ex(root, "success", &success_obj)) {
+                                bool rec_success = json_object_get_boolean(success_obj);
+                                
+                                if (rec_success == true) {
+                                    struct json_object *battery_soc_obj, *use_power_obj, *wire_power_obj;
+                                    struct json_object *battery_power_obj, *last_update_obj, *generation_power_obj;
+                                    
+                                    json_object_object_get_ex(root, "batterySoc", &battery_soc_obj);
+                                    json_object_object_get_ex(root, "usePower", &use_power_obj);
+                                    json_object_object_get_ex(root, "wirePower", &wire_power_obj);
+                                    json_object_object_get_ex(root, "batteryPower", &battery_power_obj);
+                                    json_object_object_get_ex(root, "lastUpdateTime", &last_update_obj);
+                                    json_object_object_get_ex(root, "generationPower", &generation_power_obj);
+                                    
+                                    if(battery_soc_obj && use_power_obj && wire_power_obj && 
+                                       battery_power_obj && last_update_obj && generation_power_obj) {
+                                        
+                                        float rec_batteryCharge = json_object_get_double(battery_soc_obj);
+                                        float rec_usingPower = json_object_get_double(use_power_obj);
+                                        float rec_gridPower = json_object_get_double(wire_power_obj);
+                                        float rec_batteryPower = json_object_get_double(battery_power_obj);
+                                        time_t rec_time = (time_t)json_object_get_int64(last_update_obj);
+                                        float rec_solarPower = json_object_get_double(generation_power_obj);
+
+                                        struct tm ts;
+                                        char time_buf[CHAR_LEN];
+
+                                        localtime_r(&rec_time, &ts);
+                                        strftime(time_buf, sizeof(time_buf), "%H:%M:%S", &ts);
+                                        solar.currentUpdateTime = time(NULL);
+                                        solar.solarPower = rec_solarPower / 1000;
+                                        solar.batteryPower = rec_batteryPower / 1000;
+                                        solar.usingPower = rec_usingPower / 1000;
+                                        solar.batteryCharge = rec_batteryCharge;
+                                        solar.gridPower = rec_gridPower / 1000;
+                                        snprintf(solar.time, CHAR_LEN, "%s", time_buf);
+
+                                        // Storage code commented out in original - keeping it commented
+                                        logAndPublish("Solar status updated");
+                                        saveDataBlock(SOLAR_DATA_FILENAME, &solar, sizeof(solar));
+                                    }
+                                } else {
+                                    struct json_object *msg_obj;
+                                    if(json_object_object_get_ex(root, "msg", &msg_obj)) {
+                                        const char* msg = json_object_get_string(msg_obj);
+                                        if (msg && strcmp(msg, "auth invalid token") == 0) {
+                                            logAndPublish("Solar token expired, clearing for refresh");
+                                            strcpy(solar_token, "");
+                                        } else {
+                                            char log_message[CHAR_LEN];
+                                            snprintf(log_message, CHAR_LEN, "Solar status failed: %s", msg);
+                                            errorPublish(log_message);
+                                        }
+                                    }
+                                }
+                            }
+                            json_object_put(root);
+                        } else {
+                            logAndPublish("Solar status update failed: JSON parse error");
+                        }
+                    } else {
+                        char log_message[CHAR_LEN];
+                        snprintf(log_message, CHAR_LEN, 
+                                 "[HTTP] GET solar status failed, response code: %ld", response_code);
+                        errorPublish(log_message);
+                        usleep(API_FAIL_DELAY_SEC * 1000000);
+                    }
+                } else {
+                    char log_message[CHAR_LEN];
+                    snprintf(log_message, CHAR_LEN, "[HTTP] GET solar status failed: %s", 
+                             curl_easy_strerror(res));
+                    errorPublish(log_message);
+                    usleep(API_FAIL_DELAY_SEC * 1000000);
+                }
+                
+                free(chunk.memory);
+                curl_slist_free_all(headers);
+                curl_easy_cleanup(curl);
+            }
+            
+            pthread_mutex_unlock(&httpMutex);
+        }
+        usleep(API_LOOP_DELAY_SEC * 1000000);
+    }
+    return NULL;
+}
+
+// Get daily solar values from Solarman
+void* get_daily_solar_t(void* pvParameters) {
+    (void)pvParameters;
     char currentDate[CHAR_LEN];
     char currentYearMonth[CHAR_LEN];
     char previousMonthYearMonth[CHAR_LEN];
 
-    // Define a buffer for the JSON payload
     while (true) {
         if ((time(NULL) - solar.dailyUpdateTime > SOLAR_DAILY_UPDATE_INTERVAL_SEC)) {
-            // First, check if the token is available
             if (strlen(solar_token) == 0) {
-                vTaskDelay(pdMS_TO_TICKS(SOLAR_TOKEN_WAIT_SEC * 1000));
-                continue; // Skip this loop iteration and try again after a short delay
+                usleep(SOLAR_TOKEN_WAIT_SEC * 1000000);
+                continue;
             }
-            if (WiFi.status() == WL_CONNECTED) {
-                if (xSemaphoreTake(httpMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                    /*
-                      timeType 1 with start and end date of today gives array of size
-                      "total", then in stationDataItems -> batterySoc to get battery
-                      min/max for today timeType 2 with start and end date of today
-                      gives today's buy amount as stationDataItems -> buyValue
-                      timeType 3 with start and end date of today (but now date only
-                      year month) gives this months's buy amount as stationDataItems
-                      -> buyValue
-                      */
+            
+            pthread_mutex_lock(&httpMutex);
+            
+            time_t now_time = time(NULL);
+            struct tm CurrenTimeInfo;
+            localtime_r(&now_time, &CurrenTimeInfo);
+            time_t previousMonth = now_time - 30 * 24 * 3600;
+            struct tm previousMonthTimeInfo;
+            localtime_r(&previousMonth, &previousMonthTimeInfo);
 
-                    time_t now_time = time(NULL);
-                    struct tm CurrenTimeInfo;
-                    localtime_r(&now_time, &CurrenTimeInfo);
-                    time_t previousMonth = now_time - 30 * 24 * 3600; // One month ago
-                    struct tm previousMonthTimeInfo;
-                    localtime_r(&previousMonth, &previousMonthTimeInfo);
+            strftime(currentDate, sizeof(currentDate), "%Y-%m-%d", &CurrenTimeInfo);
+            strftime(currentYearMonth, sizeof(currentYearMonth), "%Y-%m", &CurrenTimeInfo);
+            strftime(previousMonthYearMonth, sizeof(previousMonthYearMonth), "%Y-%m", &previousMonthTimeInfo);
 
-                    strftime(currentDate, sizeof(currentDate), "%Y-%m-%d", &CurrenTimeInfo);
-                    strftime(currentYearMonth, sizeof(currentYearMonth), "%Y-%m", &CurrenTimeInfo);
-                    strftime(previousMonthYearMonth, sizeof(previousMonthYearMonth), "%Y-%m", &previousMonthTimeInfo);
-
-                    // Get the today buy amount (timetype 2)
-                    snprintf(url_buffer, URL_BUFFER_SIZE, "https://%s/station/v1.0/history?language=en", SOLAR_URL);
-                    http.begin(url_buffer);
-                    http.addHeader("Content-Type", "application/json");
-                    http.addHeader("Authorization", solar_token);
-
-                    snprintf(post_buffer, POST_BUFFER_SIZE, "{\n\"stationId\" : \"%s\",\n\"timeType\" : 2,\n\"startTime\" : \"%s\",\n\"endTime\" : \"%s\"\n}", SOLAR_STATIONID,
-                             currentDate, currentDate);
-                    int httpCode = http.POST(post_buffer);
-                    if (httpCode == HTTP_CODE_OK) {
-                        int content_length = http.getSize();
-                        int payload_len = readFixedLengthPayload(http.getStreamPtr(), payload_buffer, JSON_PAYLOAD_SIZE, content_length);
-                        if (payload_len > 0) {
-                            JsonDocument root;
-                            deserializeJson(root, payload_buffer);
-                            bool rec_success = root["success"];
-                            if (rec_success == true) {
-                                float today_buy = root["stationDataItems"][0]["buyValue"];
-                                solar.today_buy = today_buy;
-                                logAndPublish("Solar today's buy value updated");
-                                solar.dailyUpdateTime = time(NULL);
-                                saveDataBlock(SOLAR_DATA_FILENAME, &solar, sizeof(solar));
-                            } else {
-                                logAndPublish("Solar today's buy value update failed: No success");
+            snprintf(url_buffer, URL_BUFFER_SIZE, 
+                     "https://%s/station/v1.0/history?language=en", SOLAR_URL);
+            
+            CURL *curl = curl_easy_init();
+            if(curl) {
+                struct MemoryStruct chunk;
+                chunk.memory = (char*)malloc(1);
+                chunk.size = 0;
+                
+                struct curl_slist *headers = NULL;
+                headers = curl_slist_append(headers, "Content-Type: application/json");
+                
+                char auth_header[SOLAR_TOKEN_LENGTH + 20];
+                snprintf(auth_header, sizeof(auth_header), "Authorization: %s", solar_token);
+                headers = curl_slist_append(headers, auth_header);
+                
+                snprintf(post_buffer, POST_BUFFER_SIZE, 
+                         "{\"stationId\":\"%s\",\"timeType\":2,\"startTime\":\"%s\",\"endTime\":\"%s\"}", 
+                         SOLAR_STATIONID, currentDate, currentDate);
+                
+                curl_easy_setopt(curl, CURLOPT_URL, url_buffer);
+                curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_buffer);
+                curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+                curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+                curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+                
+                CURLcode res = curl_easy_perform(curl);
+                
+                if(res == CURLE_OK) {
+                    long response_code;
+                    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+                    
+                    if(response_code == 200 && chunk.size > 0) {
+                        struct json_object *root = json_tokener_parse(chunk.memory);
+                        
+                        if(root != NULL) {
+                            struct json_object *success_obj;
+                            if(json_object_object_get_ex(root, "success", &success_obj)) {
+                                bool rec_success = json_object_get_boolean(success_obj);
+                                
+                                if (rec_success == true) {
+                                    struct json_object *station_data_items;
+                                    if(json_object_object_get_ex(root, "stationDataItems", &station_data_items)) {
+                                        struct json_object *first_item = json_object_array_get_idx(station_data_items, 0);
+                                        if(first_item) {
+                                            struct json_object *buy_value_obj;
+                                            if(json_object_object_get_ex(first_item, "buyValue", &buy_value_obj)) {
+                                                float today_buy = json_object_get_double(buy_value_obj);
+                                                solar.today_buy = today_buy;
+                                                logAndPublish("Solar today's buy value updated");
+                                                solar.dailyUpdateTime = time(NULL);
+                                                saveDataBlock(SOLAR_DATA_FILENAME, &solar, sizeof(solar));
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    logAndPublish("Solar today's buy value update failed: No success");
+                                }
                             }
+                            json_object_put(root);
                         } else {
-                            logAndPublish("Solar today's buy value update failed: Payload read error");
+                            logAndPublish("Solar today's buy value update failed: JSON parse error");
                         }
-                        http.end();
-                        xSemaphoreGive(httpMutex);
                     } else {
                         char log_message[CHAR_LEN];
-                        snprintf(log_message, CHAR_LEN, "[HTTP] GET solar today buy value failed, error: %d", httpCode);
+                        snprintf(log_message, CHAR_LEN, 
+                                 "[HTTP] GET solar today buy value failed, response code: %ld", response_code);
                         errorPublish(log_message);
                         logAndPublish("Getting solar today buy value failed");
-                        http.end();
-                        xSemaphoreGive(httpMutex);
-                        vTaskDelay(pdMS_TO_TICKS(API_FAIL_DELAY_SEC * 1000)); // Stop calling too often for errors
+                        usleep(API_FAIL_DELAY_SEC * 1000000);
                     }
+                } else {
+                    char log_message[CHAR_LEN];
+                    snprintf(log_message, CHAR_LEN, 
+                             "[HTTP] GET solar today buy value failed: %s", curl_easy_strerror(res));
+                    errorPublish(log_message);
+                    logAndPublish("Getting solar today buy value failed");
+                    usleep(API_FAIL_DELAY_SEC * 1000000);
                 }
+                
+                free(chunk.memory);
+                curl_slist_free_all(headers);
+                curl_easy_cleanup(curl);
             }
+            
+            pthread_mutex_unlock(&httpMutex);
         }
-        vTaskDelay(pdMS_TO_TICKS(API_LOOP_DELAY_SEC * 1000));
+        usleep(API_LOOP_DELAY_SEC * 1000000);
     }
+    return NULL;
 }
 
-// Get current solar values from Solarman
-void get_monthly_solar_t(void* pvParameters) {
+// Get monthly solar values from Solarman
+void* get_monthly_solar_t(void* pvParameters) {
+    (void)pvParameters;
     char currentDate[CHAR_LEN];
     char currentYearMonth[CHAR_LEN];
     char previousMonthYearMonth[CHAR_LEN];
 
-    // Get station status
     while (true) {
         if ((time(NULL) - solar.monthlyUpdateTime > SOLAR_MONTHLY_UPDATE_INTERVAL_SEC)) {
             if (strlen(solar_token) == 0) {
-                vTaskDelay(pdMS_TO_TICKS(SOLAR_TOKEN_WAIT_SEC * 1000));
-                continue; // Skip this loop iteration and try again after a short delay
+                usleep(SOLAR_TOKEN_WAIT_SEC * 1000000);
+                continue;
             }
-            if (WiFi.status() == WL_CONNECTED) {
-                if (xSemaphoreTake(httpMutex, pdMS_TO_TICKS(API_SEMAPHORE_WAIT_SEC * 1000)) == pdTRUE) {
-                    /*
-                      timeType 1 with start and end date of today gives array of size
-                      "total", then in stationDataItems -> batterySoc to get battery
-                      min/max for today timeType 2 with start and end date of today
-                      gives today's buy amount as stationDataItems -> buyValue
-                      timeType 3 with start and end date of today (but now date only
-                      year month) gives this months's buy amount as stationDataItems
-                      -> buyValue
-                      */
-                    time_t now_time = time(NULL);
-                    struct tm CurrentTimeInfo;
-                    localtime_r(&now_time, &CurrentTimeInfo);
-                    time_t previousMonth = now_time - 30 * 24 * 3600; // One month ago
-                    struct tm previousMonthTimeInfo;
-                    localtime_r(&previousMonth, &previousMonthTimeInfo);
+            
+            pthread_mutex_lock(&httpMutex);
+            
+            time_t now_time = time(NULL);
+            struct tm CurrentTimeInfo;
+            localtime_r(&now_time, &CurrentTimeInfo);
+            time_t previousMonth = now_time - 30 * 24 * 3600;
+            struct tm previousMonthTimeInfo;
+            localtime_r(&previousMonth, &previousMonthTimeInfo);
 
-                    strftime(currentDate, sizeof(currentDate), "%Y-%m-%d", &CurrentTimeInfo);
-                    strftime(currentYearMonth, sizeof(currentYearMonth), "%Y-%m", &CurrentTimeInfo);
-                    strftime(previousMonthYearMonth, sizeof(previousMonthYearMonth), "%Y-%m", &previousMonthTimeInfo);
+            strftime(currentDate, sizeof(currentDate), "%Y-%m-%d", &CurrentTimeInfo);
+            strftime(currentYearMonth, sizeof(currentYearMonth), "%Y-%m", &CurrentTimeInfo);
+            strftime(previousMonthYearMonth, sizeof(previousMonthYearMonth), "%Y-%m", &previousMonthTimeInfo);
 
-                    // Get month buy value timeType 3
-                    snprintf(url_buffer, URL_BUFFER_SIZE, "https://%s/station/v1.0/history?language=en", SOLAR_URL);
-                    http.begin(url_buffer);
-                    http.addHeader("Content-Type", "application/json");
-                    http.addHeader("Authorization", solar_token);
-
-                    snprintf(post_buffer, POST_BUFFER_SIZE, "{\n\"stationId\" : \"%s\",\n\"timeType\" : 3,\n\"startTime\" : \"%s\",\n\"endTime\" : \"%s\"\n}", SOLAR_STATIONID,
-                             currentYearMonth, currentYearMonth);
-                    int httpCode = http.POST(post_buffer);
-                    if (httpCode == HTTP_CODE_OK) {
-                        int content_length = http.getSize();
-                        int payload_len = readFixedLengthPayload(http.getStreamPtr(), payload_buffer, JSON_PAYLOAD_SIZE, content_length);
-                        if (payload_len > 0) {
-                            JsonDocument root;
-                            deserializeJson(root, payload_buffer);
-                            bool rec_success = root["success"];
-                            if (rec_success == true) {
-                                float month_buy = root["stationDataItems"][0]["buyValue"];
-
-                                solar.month_buy = month_buy;
-                                solar.monthlyUpdateTime = time(NULL);
-                                logAndPublish("Solar month's buy value updated");
-                                saveDataBlock(SOLAR_DATA_FILENAME, &solar, sizeof(solar));
+            snprintf(url_buffer, URL_BUFFER_SIZE, 
+                     "https://%s/station/v1.0/history?language=en", SOLAR_URL);
+            
+            CURL *curl = curl_easy_init();
+            if(curl) {
+                struct MemoryStruct chunk;
+                chunk.memory = (char*)malloc(1);
+                chunk.size = 0;
+                
+                struct curl_slist *headers = NULL;
+                headers = curl_slist_append(headers, "Content-Type: application/json");
+                
+                char auth_header[SOLAR_TOKEN_LENGTH + 20];
+                snprintf(auth_header, sizeof(auth_header), "Authorization: %s", solar_token);
+                headers = curl_slist_append(headers, auth_header);
+                
+                snprintf(post_buffer, POST_BUFFER_SIZE, 
+                         "{\"stationId\":\"%s\",\"timeType\":3,\"startTime\":\"%s\",\"endTime\":\"%s\"}", 
+                         SOLAR_STATIONID, currentYearMonth, currentYearMonth);
+                
+                curl_easy_setopt(curl, CURLOPT_URL, url_buffer);
+                curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_buffer);
+                curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+                curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+                curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+                
+                CURLcode res = curl_easy_perform(curl);
+                
+                if(res == CURLE_OK) {
+                    long response_code;
+                    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+                    
+                    if(response_code == 200 && chunk.size > 0) {
+                        struct json_object *root = json_tokener_parse(chunk.memory);
+                        
+                        if(root != NULL) {
+                            struct json_object *success_obj;
+                            if(json_object_object_get_ex(root, "success", &success_obj)) {
+                                bool rec_success = json_object_get_boolean(success_obj);
+                                
+                                if (rec_success == true) {
+                                    struct json_object *station_data_items;
+                                    if(json_object_object_get_ex(root, "stationDataItems", &station_data_items)) {
+                                        struct json_object *first_item = json_object_array_get_idx(station_data_items, 0);
+                                        if(first_item) {
+                                            struct json_object *buy_value_obj;
+                                            if(json_object_object_get_ex(first_item, "buyValue", &buy_value_obj)) {
+                                                float month_buy = json_object_get_double(buy_value_obj);
+                                                solar.month_buy = month_buy;
+                                                solar.monthlyUpdateTime = time(NULL);
+                                                logAndPublish("Solar month's buy value updated");
+                                                saveDataBlock(SOLAR_DATA_FILENAME, &solar, sizeof(solar));
+                                            }
+                                        }
+                                    }
+                                }
                             }
+                            json_object_put(root);
                         } else {
-                            logAndPublish("Solar month's buy value update failed: Payload read error");
+                            logAndPublish("Solar month's buy value update failed: JSON parse error");
                         }
-
-                        http.end();
-                        xSemaphoreGive(httpMutex);
                     } else {
                         char log_message[CHAR_LEN];
-                        snprintf(log_message, CHAR_LEN, "[HTTP] GET solar month buy value failed, error: %d", httpCode);
+                        snprintf(log_message, CHAR_LEN, 
+                                 "[HTTP] GET solar month buy value failed, response code: %ld", response_code);
                         errorPublish(log_message);
                         logAndPublish("Getting solar month buy value failed");
-                        http.end();
-                        xSemaphoreGive(httpMutex);
-                        vTaskDelay(pdMS_TO_TICKS(API_FAIL_DELAY_SEC * 1000)); // Stop calling too often for errors
+                        usleep(API_FAIL_DELAY_SEC * 1000000);
                     }
+                } else {
+                    char log_message[CHAR_LEN];
+                    snprintf(log_message, CHAR_LEN, 
+                             "[HTTP] GET solar month buy value failed: %s", curl_easy_strerror(res));
+                    errorPublish(log_message);
+                    logAndPublish("Getting solar month buy value failed");
+                    usleep(API_FAIL_DELAY_SEC * 1000000);
                 }
+                
+                free(chunk.memory);
+                curl_slist_free_all(headers);
+                curl_easy_cleanup(curl);
             }
+            
+            pthread_mutex_unlock(&httpMutex);
         }
-        vTaskDelay(pdMS_TO_TICKS(API_LOOP_DELAY_SEC * 1000));
+        usleep(API_LOOP_DELAY_SEC * 1000000);
     }
-}
-
-int readChunkedPayload(WiFiClient* stream, char* buffer, size_t buffer_size) {
-    size_t total_read = 0;
-
-    while (stream->connected() && (total_read < buffer_size - 1)) {
-        // Read the chunk size line
-        char size_line_buffer[16];
-        int bytes_read = stream->readBytesUntil('\n', size_line_buffer, sizeof(size_line_buffer) - 1);
-        if (bytes_read <= 0)
-            break;
-
-        size_line_buffer[bytes_read] = '\0';
-
-        // Trim any trailing carriage return
-        if (bytes_read > 0 && size_line_buffer[bytes_read - 1] == '\r') {
-            size_line_buffer[bytes_read - 1] = '\0';
-        }
-
-        // Convert the hex string to an integer
-        long chunkSize = strtol(size_line_buffer, NULL, 16);
-        if (chunkSize == 0)
-            break; // End of chunks
-
-        // Check for buffer overflow
-        if (total_read + chunkSize >= buffer_size) {
-            // Read and discard the rest of the stream to avoid issues on next request
-            while (stream->available()) {
-                stream->read();
-            }
-            return -1; // Indicate a buffer overflow error
-        }
-
-        // Read the chunk data
-        size_t data_read = stream->readBytes(buffer + total_read, chunkSize);
-        if (data_read != chunkSize) {
-            // Handle incomplete read if necessary, though it's unlikely with a valid stream
-        }
-        total_read += data_read;
-
-        // Read and discard the trailing \r\n
-        stream->read();
-        stream->read();
-    }
-
-    buffer[total_read] = '\0';
-    return total_read;
-}
-
-int readFixedLengthPayload(WiFiClient* stream, char* buffer, size_t buffer_size, size_t content_length) {
-    // Check for buffer overflow before starting the read
-    if (content_length >= buffer_size) {
-        // Discard the entire body to free the stream
-        while (stream->available()) {
-            stream->read();
-        }
-        return -1; // Indicate a buffer overflow error
-    }
-
-    // Read the exact number of bytes specified by Content-Length
-    size_t bytes_read = stream->readBytes(buffer, content_length);
-
-    // Terminate the buffer with a null character
-    buffer[bytes_read] = '\0';
-
-    return bytes_read;
+    return NULL;
 }

@@ -1,87 +1,54 @@
-#include <globals.h>
+#include "globals.h"
 
-extern MqttClient mqttClient;
-extern SemaphoreHandle_t mqttMutex;
+extern struct mosquitto *mosq;
+extern pthread_mutex_t mqttMutex;
 extern Readings readings[];
 extern int numberOfReadings;
 
-// Get mqtt messages
-void receive_mqtt_messages_t(void* pvParams) {
-    int messageSize = 0;
-    char topicBuffer[CHAR_LEN];
-    char recMessage[CHAR_LEN]; // Remove = {0} here
-    int index;
-
-    while (true) {
-        // Reconnect if necessary
-        if (!mqttClient.connected()) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
-        }
-
-        if (xSemaphoreTake(mqttMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
-            messageSize = mqttClient.parseMessage();
-            if (messageSize) {
-                // Clear buffers at the start of each message processing
-                memset(topicBuffer, 0, sizeof(topicBuffer));
-                memset(recMessage, 0, sizeof(recMessage));
-
-                int topicLength = mqttClient.messageTopic().length();
-                mqttClient.messageTopic().toCharArray(topicBuffer, topicLength + 1);
-
-                // Read exactly messageSize bytes
-                int bytesRead = mqttClient.read((unsigned char*)recMessage, messageSize);
-                xSemaphoreGive(mqttMutex);
-
-                if (bytesRead != messageSize) {
-                    char log_msg[CHAR_LEN];
-                    snprintf(log_msg, CHAR_LEN, "MQTT read mismatch: expected %d, got %d", messageSize, bytesRead);
-                    logAndPublish(log_msg);
-                    continue;
-                }
-
-                if (messageSize >= CHAR_LEN) {
-                    logAndPublish("MQTT message exceeds buffer size");
-                    xSemaphoreGive(mqttMutex);
-                    continue;
-                }
-
-
-                // Additional validation - check if message is empty or just whitespace
-                if (messageSize == 0 || recMessage[0] == '\0') {
-                    char log_msg[CHAR_LEN];
-                    snprintf(log_msg, CHAR_LEN, "Empty MQTT message on topic: %s", topicBuffer);
-                    logAndPublish(log_msg);
-                    continue;
-                }
-
-                bool messageProcessed = false;
-                for (int i = 0; i < numberOfReadings; i++) {
-                    if (strcmp(topicBuffer, readings[i].topic) == 0) {
-                        index = i;
-                        if (readings[i].dataType == DATA_TEMPERATURE || readings[i].dataType == DATA_HUMIDITY || readings[i].dataType == DATA_BATTERY) {
-                            update_readings(recMessage, index, readings[i].dataType);
-                            messageProcessed = true;
-                        }
-                        break; // Found matching topic, no need to continue loop
-                    }
-                }
-
-                if (!messageProcessed) {
-                    char log_msg[CHAR_LEN];
-                    snprintf(log_msg, CHAR_LEN, "Unhandled MQTT topic: %s, message: %s", topicBuffer, recMessage);
-                    logAndPublish(log_msg);
-                }
-
-                saveDataBlock(READINGS_DATA_FILENAME, readings, sizeof(Readings) * numberOfReadings);
-            } else {
-                // No message
-                xSemaphoreGive(mqttMutex);
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(100));
+// Process received MQTT message
+void process_mqtt_message(const char* topic, char* payload, int payloadlen) {
+    char recMessage[CHAR_LEN];
+    
+    // Copy payload and null-terminate
+    if(payloadlen >= CHAR_LEN) {
+        logAndPublish("MQTT message exceeds buffer size");
+        return;
     }
+    
+    memcpy(recMessage, payload, payloadlen);
+    recMessage[payloadlen] = '\0';
+    
+    // Validate message
+    if (payloadlen == 0 || recMessage[0] == '\0') {
+        char log_msg[CHAR_LEN];
+        snprintf(log_msg, CHAR_LEN, "Empty MQTT message on topic: %s", topic);
+        logAndPublish(log_msg);
+        return;
+    }
+    
+    // Find matching topic and process
+    bool messageProcessed = false;
+    for (int i = 0; i < numberOfReadings; i++) {
+        if (strcmp(topic, readings[i].topic) == 0) {
+            if (readings[i].dataType == DATA_TEMPERATURE || 
+                readings[i].dataType == DATA_HUMIDITY || 
+                readings[i].dataType == DATA_BATTERY) {
+                update_readings(recMessage, i, readings[i].dataType);
+                messageProcessed = true;
+            }
+            break;
+        }
+    }
+    
+    if (!messageProcessed) {
+        char log_msg[CHAR_LEN];
+        snprintf(log_msg, CHAR_LEN, "Unhandled MQTT topic: %s, message: %s", topic, recMessage);
+        logAndPublish(log_msg);
+    }
+    
+    saveDataBlock(READINGS_DATA_FILENAME, readings, sizeof(Readings) * numberOfReadings);
 }
+
 
 void update_readings(char* recMessage, int index, int dataType) {
     float averageHistory;
@@ -106,7 +73,6 @@ void update_readings(char* recMessage, int index, int dataType) {
         log_message_suffix = "battery";
         break;
     default:
-        // Handle unknown data type
         return;
     }
 
@@ -125,7 +91,6 @@ void update_readings(char* recMessage, int index, int dataType) {
         }
         averageHistory = totalHistory / readings[index].readingIndex;
 
-        // Only update change character for temperature and humidity
         if (dataType == DATA_TEMPERATURE || dataType == DATA_HUMIDITY) {
             if (readings[index].currentValue > averageHistory) {
                 readings[index].changeChar = CHAR_UP;

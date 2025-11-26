@@ -1,4 +1,5 @@
 #include "globals.h"
+
 extern Solar solar;
 
 uint8_t calculateChecksum(const void* data_ptr, size_t size) {
@@ -15,7 +16,7 @@ bool saveDataBlock(const char* filename, const void* data_ptr, size_t size) {
   header.size = size;
   header.checksum = calculateChecksum(data_ptr, size);
 
-  File dataFile = SD_MMC.open(filename, FILE_WRITE);
+  /*File dataFile = SD_MMC.open(filename, FILE_WRITE);
 
   if (!dataFile) {
     char log_message[CHAR_LEN];
@@ -50,11 +51,11 @@ bool saveDataBlock(const char* filename, const void* data_ptr, size_t size) {
     snprintf(log_message, sizeof(log_message), "Failed to write all data. Wrote %zu of %zu data bytes to %s", bytesWritten, size, filename);
     logAndPublish(log_message);
     return false;
-  }
+  } */
 }
 
 bool loadDataBlock(const char* filename, void* data_ptr, size_t expected_size) {
-  if (!SD_MMC.exists(filename)) {
+  /*if (!SD_MMC.exists(filename)) {
     char log_message[CHAR_LEN];
     snprintf(log_message, sizeof(log_message), "File %s does not exist", filename);
     logAndPublish(log_message);
@@ -114,4 +115,5 @@ bool loadDataBlock(const char* filename, void* data_ptr, size_t expected_size) {
     return false;
   }
   return true;
+  */return false;
 }

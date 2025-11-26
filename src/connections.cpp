@@ -1,88 +1,99 @@
 #include "globals.h"
+#include <mosquitto.h>
 
-extern MqttClient mqttClient;
+
+extern struct mosquitto *mosq;
 extern Readings readings[];
 extern int numberOfReadings;
 extern struct tm timeinfo;
+extern bool mqtt_connected;
 
-void setup_wifi() {
-    int counter = 1;
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    WiFi.persistent(false);
-    WiFi.setAutoReconnect(true);
-    WiFi.setTxPower(WIFI_POWER_2dBm);
-
-    while (WiFi.status() != WL_CONNECTED) {
-        counter++;
-        if (counter > WIFI_RETRIES) {
-            logAndPublish("Restarting due to WiFi connection errors");
-            ESP.restart();
+// Callback when connection is established
+void on_connect_callback(struct mosquitto *mosq, void *obj, int rc) {
+    if(rc == 0) {
+        mqtt_connected = true;
+        logAndPublish("Connected to the MQTT broker");
+        
+        // Subscribe to all topics
+        for (int i = 0; i < numberOfReadings; i++) {
+            mosquitto_subscribe(mosq, NULL, readings[i].topic, 0);
+            char log_msg[CHAR_LEN];
+            snprintf(log_msg, CHAR_LEN, "Subscribed to: %s", readings[i].topic);
+            logAndPublish(log_msg);
         }
-        char messageBuffer[CHAR_LEN];
-        snprintf(messageBuffer, CHAR_LEN, "Attempting to connect to WiFi %d/%d", counter, WIFI_RETRIES);
-        logAndPublish(messageBuffer);
-        // WiFi.disconnect();
-        // WiFi.reconnect();
-        vTaskDelay(pdMS_TO_TICKS(WIFI_RETRY_DELAY_SEC * 1000)); // Wait before retrying
+    } else {
+        mqtt_connected = false;
+        char log_msg[CHAR_LEN];
+        snprintf(log_msg, CHAR_LEN, "MQTT connection failed with code: %d", rc);
+        logAndPublish(log_msg);
     }
-    IPAddress ip = WiFi.localIP();
-    char ipStr[16];
-    snprintf(ipStr, sizeof(ipStr), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
-    char messageBuffer[CHAR_LEN];
-    snprintf(messageBuffer, CHAR_LEN, "Connected to WiFi SSID: %s", WiFi.SSID().c_str());
-    logAndPublish(messageBuffer);
-    setup_OTA_web();
+}
+
+// Callback when connection is lost
+void on_disconnect_callback(struct mosquitto *mosq, void *obj, int rc) {
+    mqtt_connected = false;
+    if(rc != 0) {
+        logAndPublish("MQTT connection lost unexpectedly");
+    }
+}
+
+// Callback when message is received
+void on_message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg) {
+    // This will be handled in mqtt.cpp - just forward to processing function
+    process_mqtt_message(msg->topic, (char*)msg->payload, msg->payloadlen);
 }
 
 void mqtt_connect() {
-    mqttClient.setUsernamePassword(MQTT_USER, MQTT_PASSWORD);
     char messageBuffer[CHAR_LEN];
-    snprintf(messageBuffer, CHAR_LEN, "Connecting to MQTT broker %s", MQTT_SERVER);
+    snprintf(messageBuffer, CHAR_LEN, "Connecting to MQTT broker %s:%d", MQTT_SERVER, MQTT_PORT);
     logAndPublish(messageBuffer);
-    if (!mqttClient.connected()) {
-        if (!mqttClient.connect(MQTT_SERVER, MQTT_PORT)) {
-            logAndPublish("MQTT receive connection failed");
-            vTaskDelay(pdMS_TO_TICKS(MQTT_RETRY_DELAY_SEC * 1000));
-            return;
-        }
+    
+    if(mosq == NULL) {
+        logAndPublish("MQTT client not initialized");
+        return;
     }
-    logAndPublish("Connected to the MQTT broker");
-    for (int i = 0; i < numberOfReadings; i++) {
-        mqttClient.subscribe(readings[i].topic);
+    
+    // Set username and password
+    mosquitto_username_pw_set(mosq, MQTT_USER, MQTT_PASSWORD);
+    
+    // Connect to broker
+    int rc = mosquitto_connect(mosq, MQTT_SERVER, MQTT_PORT, 60);
+    if(rc != MOSQ_ERR_SUCCESS) {
+        char log_msg[CHAR_LEN];
+        snprintf(log_msg, CHAR_LEN, "MQTT connect failed: %s", mosquitto_strerror(rc));
+        logAndPublish(log_msg);
     }
 }
 
 void time_init() {
-    struct tm timeinfo;
-    if (!getLocalTime(&timeinfo)) {
+    time_t now = time(NULL);
+    struct tm *timeinfo_ptr = localtime(&now);
+    if (timeinfo_ptr == NULL) {
         logAndPublish("Failed to obtain time");
         return;
     }
     logAndPublish("Time synchronized successfully");
-    logAndPublish(asctime(&timeinfo));
+    logAndPublish(asctime(timeinfo_ptr));
 }
 
-void connectivity_manager_t(void* pvParameters) {
+void* connectivity_manager_t(void* pvParameters) {
     bool wasDisconnected;
+    
     while (true) {
         wasDisconnected = false;
-        if (WiFi.status() != WL_CONNECTED) {
+        
+        // Check MQTT connection
+        if (!mqtt_connected) {
             wasDisconnected = true;
-            logAndPublish("WiFi is reconnecting");
-            setup_wifi(); 
-            vTaskDelay(pdMS_TO_TICKS(1000));
-        }
-        if (wasDisconnected) {
-            // Only do this if we were previously disconnected
-            time_init();
-        }
-        if (WiFi.status() == WL_CONNECTED && !mqttClient.connected()) {
             logAndPublish("MQTT is reconnecting");
             mqtt_connect();
-            vTaskDelay(pdMS_TO_TICKS(1000));
+            usleep(1000000);
         }
-
-        vTaskDelay(pdMS_TO_TICKS(5000)); // Check connection status every 5 seconds
+        
+        if (wasDisconnected) {
+            time_init();
+        }
+        
+        usleep(5000000); // Check connection status every 5 seconds
     }
 }

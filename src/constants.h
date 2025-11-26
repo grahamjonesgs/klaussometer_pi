@@ -26,8 +26,6 @@
 #define DIRECTION_LABELS {&ui_Direction1, &ui_Direction2, &ui_Direction3, &ui_Direction4, &ui_Direction5}
 #define HUMIDITY_LABELS {&ui_HumidLabel1, &ui_HumidLabel2, &ui_HumidLabel3, &ui_HumidLabel4, &ui_HumidLabel5}
 
-static const char* LOG_TOPIC = "klaussometer/log";
-static const char* ERROR_TOPIC = "klaussometer/error";
 
 static const int CHAR_LEN = 255;
 #define NO_READING "--"
@@ -152,5 +150,7 @@ static const char* READINGS_DATA_FILENAME = "/readings_data.bin";
 // Log settings
 #define NORMAL_LOG_BUFFER_SIZE 500
 #define ERROR_LOG_BUFFER_SIZE 500
+
+#define TIME_SYNC_THRESHOLD 1700000000 // Time after which readings are validated
 
 #endif // CONSTANTS_H

@@ -1,6 +1,6 @@
 
 #include "globals.h"
-#include <cstdio>
+
 
 extern Readings readings[];
 extern Weather weather;
