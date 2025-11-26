@@ -17,9 +17,6 @@ void on_connect_callback(struct mosquitto *mosq, void *obj, int rc) {
         // Subscribe to all topics
         for (int i = 0; i < numberOfReadings; i++) {
             mosquitto_subscribe(mosq, NULL, readings[i].topic, 0);
-            char log_msg[CHAR_LEN];
-            snprintf(log_msg, CHAR_LEN, "Subscribed to: %s", readings[i].topic);
-            logAndPublish(log_msg);
         }
     } else {
         mqtt_connected = false;
@@ -65,17 +62,6 @@ void mqtt_connect() {
     }
 }
 
-void time_init() {
-    time_t now = time(NULL);
-    struct tm *timeinfo_ptr = localtime(&now);
-    if (timeinfo_ptr == NULL) {
-        logAndPublish("Failed to obtain time");
-        return;
-    }
-    logAndPublish("Time synchronized successfully");
-    logAndPublish(asctime(timeinfo_ptr));
-}
-
 void* connectivity_manager_t(void* pvParameters) {
     bool wasDisconnected;
     
@@ -91,7 +77,7 @@ void* connectivity_manager_t(void* pvParameters) {
         }
         
         if (wasDisconnected) {
-            time_init();
+            logAndPublish("MQTT reconnected successfully");
         }
         
         usleep(5000000); // Check connection status every 5 seconds

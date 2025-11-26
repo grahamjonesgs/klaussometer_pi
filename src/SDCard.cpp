@@ -12,108 +12,102 @@ uint8_t calculateChecksum(const void* data_ptr, size_t size) {
 }
 
 bool saveDataBlock(const char* filename, const void* data_ptr, size_t size) {
-  DataHeader header;
-  header.size = size;
-  header.checksum = calculateChecksum(data_ptr, size);
-
-  /*File dataFile = SD_MMC.open(filename, FILE_WRITE);
-
-  if (!dataFile) {
-    char log_message[CHAR_LEN];
-    snprintf(log_message, sizeof(log_message), "Error opening file %s for writing", filename);
-    logAndPublish(log_message);
-    SD_MMC.setPins(PIN_SD_CLK, PIN_SD_CMD, PIN_SD_D0);
-    if (!SD_MMC.begin("/sdcard", true, true)) {
-        logAndPublish("SD Card initialization failed!");
-    } else {
-        logAndPublish("SD Card initialized");
+    FILE* dataFile = fopen(filename, "wb");
+    if (!dataFile) {
+        char log_message[CHAR_LEN];
+        snprintf(log_message, sizeof(log_message), "Error opening file %s for writing", filename);
+        logAndPublish(log_message);
+        return false;
     }
-    return false;
-  }
 
-  // 2. Write the header first
-  size_t headerWritten = dataFile.write((const uint8_t*)&header, sizeof(DataHeader));
-  if (headerWritten != sizeof(DataHeader)) {
-    char log_message[CHAR_LEN];
-    snprintf(log_message, sizeof(log_message), "Failed to write header to %s", filename);
-    logAndPublish(log_message);
-    dataFile.close();
-    return false;
-  }
-  
-  size_t bytesWritten = dataFile.write((const uint8_t*)data_ptr, size);
-  dataFile.close();
+    // 1. Prepare header
+    DataHeader header;
+    header.size = size;
+    header.checksum = calculateChecksum(data_ptr, size);
 
-  if (bytesWritten == size) {
-    return true;
-  } else {
-    char log_message[CHAR_LEN];
-    snprintf(log_message, sizeof(log_message), "Failed to write all data. Wrote %zu of %zu data bytes to %s", bytesWritten, size, filename);
-    logAndPublish(log_message);
-    return false;
-  } */
+    // 2. Write header
+    size_t headerWritten = fwrite(&header, 1, sizeof(DataHeader), dataFile);
+    if (headerWritten != sizeof(DataHeader)) {
+        char log_message[CHAR_LEN];
+        snprintf(log_message, sizeof(log_message), "Failed to write header to %s", filename);
+        logAndPublish(log_message);
+        fclose(dataFile);
+        return false;
+    }
+
+    // 3. Write data
+    size_t bytesWritten = fwrite(data_ptr, 1, size, dataFile);
+    fclose(dataFile);
+
+    if (bytesWritten != size) {
+        char log_message[CHAR_LEN];
+        snprintf(log_message, sizeof(log_message), 
+                 "Failed to write all data to %s. Wrote %zu of %zu bytes", 
+                 filename, bytesWritten, size);
+        logAndPublish(log_message);
+        return false;
+    }
+
+    return true; 
 }
 
 bool loadDataBlock(const char* filename, void* data_ptr, size_t expected_size) {
-  /*if (!SD_MMC.exists(filename)) {
-    char log_message[CHAR_LEN];
-    snprintf(log_message, sizeof(log_message), "File %s does not exist", filename);
-    logAndPublish(log_message);
-    return false;
-  }
+    FILE* dataFile = fopen(filename, "rb");
+    printf("Loading data block from %s\n", filename);
+    if (!dataFile) {
+        char log_message[CHAR_LEN];
+        snprintf(log_message, sizeof(log_message), "Error opening file %s for reading", filename);
+        logAndPublish(log_message);
+        return false;
+    }
 
-  File dataFile = SD_MMC.open(filename, FILE_READ);
-  if (!dataFile) {
-    char log_message[CHAR_LEN];
-    snprintf(log_message, sizeof(log_message), "Error opening file %s for reading", filename);
-    logAndPublish(log_message);
-    return false;
-  }
+    // 1. Read the header
+    DataHeader header;
+    size_t headerRead = fread(&header, 1, sizeof(DataHeader), dataFile);
 
-  // 1. Read the header
-  DataHeader header;
-  size_t headerRead = dataFile.readBytes((char*)&header, sizeof(DataHeader));
+    if (headerRead != sizeof(DataHeader)) {
+        char log_message[CHAR_LEN];
+        snprintf(log_message, sizeof(log_message), "Failed to read header from %s", filename);
+        logAndPublish(log_message);
+        fclose(dataFile);
+        return false;
+    }
 
-  if (headerRead != sizeof(DataHeader)) {
-    char log_message[CHAR_LEN];
-    snprintf(log_message, sizeof(log_message), "Failed to read header from %s. Expected %zu bytes", filename, sizeof(DataHeader));
-    logAndPublish(log_message);
-    dataFile.close();
-    return false;
-  }
+    // 2. Verify size matches what we expect
+    if (header.size != expected_size) {
+        char log_message[CHAR_LEN];
+        snprintf(log_message, sizeof(log_message), 
+                 "Data size mismatch in %s. Header: %zu, Expected: %zu", 
+                 filename, header.size, expected_size);
+        logAndPublish(log_message);
+        fclose(dataFile);
+        return false;
+    }
 
-  // 2. Verify file size consistency
-  if (header.size != expected_size) {
-    char log_message[CHAR_LEN];
-    snprintf(log_message, sizeof(log_message), "Data size mismatch in %s. File header says %zu bytes, but struct expects %zu bytes", 
-             filename, header.size, expected_size);
-    logAndPublish(log_message);
-    dataFile.close();
-    return false;
-  }
-  
-  // 3. Read the raw data block directly into the target memory
-  size_t bytesRead = dataFile.readBytes((char*)data_ptr, expected_size);
-  dataFile.close();
+    // 3. Read the data block
+    size_t bytesRead = fread(data_ptr, 1, expected_size, dataFile);
+    fclose(dataFile);
 
-  if (bytesRead != expected_size) {
-    char log_message[CHAR_LEN];
-    snprintf(log_message, sizeof(log_message), "Failed to read all data from %s. Read %zu of %zu bytes", 
-             filename, bytesRead, expected_size);
-    logAndPublish(log_message);
-    return false;
-  }
+    if (bytesRead != expected_size) {
+        char log_message[CHAR_LEN];
+        snprintf(log_message, sizeof(log_message), 
+                 "Failed to read all data from %s. Read %zu of %zu bytes", 
+                 filename, bytesRead, expected_size);
+        logAndPublish(log_message);
+        return false;
+    }
 
-  // 4. Verify integrity
-  uint8_t calculated = calculateChecksum(data_ptr, expected_size);
-  
-  if (header.checksum != calculated) {
-    char log_message[CHAR_LEN];
-    snprintf(log_message, sizeof(log_message), "Checksum failed for %s! Loaded: %02X, Calculated: %02X", 
-             filename, header.checksum, calculated);
-    logAndPublish(log_message);
-    return false;
-  }
-  return true;
-  */return false;
+    // 4. Verify checksum
+    uint8_t calculated = calculateChecksum(data_ptr, expected_size);
+
+    if (header.checksum != calculated) {
+        char log_message[CHAR_LEN];
+        snprintf(log_message, sizeof(log_message), 
+                 "Checksum failed for %s! Stored: 0x%02X, Calculated: 0x%02X", 
+                 filename, header.checksum, calculated);
+        logAndPublish(log_message);
+        return false;
+    }
+
+    return true;
 }

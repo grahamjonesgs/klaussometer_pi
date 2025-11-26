@@ -13,7 +13,6 @@ extern pthread_mutex_t httpMutex;
 char solar_token[SOLAR_TOKEN_LENGTH] = {0};
 
 const size_t JSON_PAYLOAD_SIZE = 4096;
-char payload_buffer[JSON_PAYLOAD_SIZE] = {0};
 const size_t URL_BUFFER_SIZE = 512;
 char url_buffer[URL_BUFFER_SIZE] = {0};
 const size_t POST_BUFFER_SIZE = 512;
@@ -564,7 +563,6 @@ void* get_daily_solar_t(void* pvParameters) {
     (void)pvParameters;
     char currentDate[CHAR_LEN];
     char currentYearMonth[CHAR_LEN];
-    char previousMonthYearMonth[CHAR_LEN];
 
     while (true) {
         if ((time(NULL) - solar.dailyUpdateTime > SOLAR_DAILY_UPDATE_INTERVAL_SEC)) {
@@ -576,15 +574,14 @@ void* get_daily_solar_t(void* pvParameters) {
             pthread_mutex_lock(&httpMutex);
             
             time_t now_time = time(NULL);
-            struct tm CurrenTimeInfo;
-            localtime_r(&now_time, &CurrenTimeInfo);
+            struct tm CurrentTimeInfo;
+            localtime_r(&now_time, &CurrentTimeInfo);
             time_t previousMonth = now_time - 30 * 24 * 3600;
             struct tm previousMonthTimeInfo;
             localtime_r(&previousMonth, &previousMonthTimeInfo);
 
-            strftime(currentDate, sizeof(currentDate), "%Y-%m-%d", &CurrenTimeInfo);
-            strftime(currentYearMonth, sizeof(currentYearMonth), "%Y-%m", &CurrenTimeInfo);
-            strftime(previousMonthYearMonth, sizeof(previousMonthYearMonth), "%Y-%m", &previousMonthTimeInfo);
+            strftime(currentDate, sizeof(currentDate), "%Y-%m-%d", &CurrentTimeInfo);
+            strftime(currentYearMonth, sizeof(currentYearMonth), "%Y-%m", &CurrentTimeInfo);
 
             snprintf(url_buffer, URL_BUFFER_SIZE, 
                      "https://%s/station/v1.0/history?language=en", SOLAR_URL);
@@ -684,7 +681,6 @@ void* get_monthly_solar_t(void* pvParameters) {
     (void)pvParameters;
     char currentDate[CHAR_LEN];
     char currentYearMonth[CHAR_LEN];
-    char previousMonthYearMonth[CHAR_LEN];
 
     while (true) {
         if ((time(NULL) - solar.monthlyUpdateTime > SOLAR_MONTHLY_UPDATE_INTERVAL_SEC)) {
@@ -704,7 +700,6 @@ void* get_monthly_solar_t(void* pvParameters) {
 
             strftime(currentDate, sizeof(currentDate), "%Y-%m-%d", &CurrentTimeInfo);
             strftime(currentYearMonth, sizeof(currentYearMonth), "%Y-%m", &CurrentTimeInfo);
-            strftime(previousMonthYearMonth, sizeof(previousMonthYearMonth), "%Y-%m", &previousMonthTimeInfo);
 
             snprintf(url_buffer, URL_BUFFER_SIZE, 
                      "https://%s/station/v1.0/history?language=en", SOLAR_URL);

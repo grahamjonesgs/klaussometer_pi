@@ -82,20 +82,15 @@ struct LogEntry {
 
 // main
 void pin_init();
-void setup_wifi();
 void mqtt_connect();
-void touch_init();
-void my_disp_flush(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map);
-void touch_read(lv_indev_t* indev, lv_indev_data_t* data);
 void set_solar_values();
-void getBatteryStatus(float batteryValue, int readingIndex, char* iconCharacterPtr, lv_color_t* colorPtr);
+void getBatteryStatus(float batteryValue, char* iconCharacterPtr, lv_color_t* colorPtr);
 void* displayStatusMessages_t(void* pvParameters);
 void logAndPublish(const char* messageBuffer);
 void errorPublish(const char* messageBuffer);
 void invalidateOldReadings();
 
 // Connections
-void setup_wifi();
 void mqtt_connect();
 void time_init();
 void* connectivity_manager_t(void* pvParameters);

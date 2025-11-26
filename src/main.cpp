@@ -18,6 +18,8 @@ Arduino Core 0
 #include <condition_variable>
 #include <thread>
 #include <chrono>
+#include <SDL2/SDL.h>
+
 
 // Create network objects
 pthread_mutex_t mqttMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -28,7 +30,7 @@ bool mqtt_connected = false;
 // Threads
 pthread_t thread_mqtt, thread_weather, thread_uv, thread_solar_token,
     thread_current_solar, thread_daily_solar, thread_monthly_solar,
-    thread_time_sync, thread_display_status,
+    thread_display_status,
     thread_connectivity_manager;
 
 // Global variables
@@ -70,38 +72,37 @@ void setup() {
     lv_init();
     disp = lv_sdl_window_create(1024, 600);
     mouse = lv_sdl_mouse_create();
-    
-    // Setup queues and mutexes
-    // Using std::queue with mutex and condition_variable instead of FreeRTOS queue
 
-    // Initialize the SD card
-    /*SD_MMC.setPins(PIN_SD_CLK, PIN_SD_CMD, PIN_SD_D0);
-    if (!SD_MMC.begin("/sdcard", true, true)) {
-        logAndPublish("SD Card initialization failed!");
-    } else {
-        logAndPublish("SD Card initialized");
+    SDL_Window* window = SDL_GetWindowFromID(1);
+    if (window) {
+        SDL_SetWindowTitle(window, "Klaussometer");
+    }
+
         if (loadDataBlock(SOLAR_DATA_FILENAME, &solar, sizeof(solar))) {
             logAndPublish("Solar state restored OK");
         } else {
             logAndPublish("Solar state restore failed");
         }
+
         if (loadDataBlock(WEATHER_DATA_FILENAME, &weather, sizeof(weather))) {
             logAndPublish("Weather state restored OK");
         } else {
             logAndPublish("Weather state restore failed");
         }
+
         if (loadDataBlock(UV_DATA_FILENAME, &uv, sizeof(uv))) {
             logAndPublish("UV state restored OK");
         } else {
             logAndPublish("UV state restore failed");
         }
+
         if (loadDataBlock(READINGS_DATA_FILENAME, &readings, sizeof(readings))) {
             logAndPublish("Readings state restored OK");
             invalidateOldReadings();
         } else {
             logAndPublish("Readings state restore failed");
         }
-    }*/
+
     mosquitto_lib_init();
     
     // Create mosquitto client instance
@@ -193,14 +194,13 @@ void setup() {
 
     // Start tasks
     pthread_create(&thread_weather, NULL, get_weather_t, NULL);
-    //pthread_create(&thread_uv, NULL, get_uv_t, NULL);
+    pthread_create(&thread_uv, NULL, get_uv_t, NULL);
     pthread_create(&thread_solar_token, NULL, get_solar_token_t, NULL);
     pthread_create(&thread_daily_solar, NULL, get_daily_solar_t, NULL);
     pthread_create(&thread_monthly_solar, NULL, get_monthly_solar_t, NULL);
     pthread_create(&thread_current_solar, NULL, get_current_solar_t, NULL);
     pthread_create(&thread_display_status, NULL, displayStatusMessages_t, NULL);
     pthread_create(&thread_connectivity_manager, NULL, connectivity_manager_t, NULL);
-    pthread_create(&thread_solar_token, NULL, get_solar_token_t, NULL);
 }
 
 void loop() {
@@ -208,6 +208,9 @@ void loop() {
     char batteryIcon;
     lv_color_t batteryColour;
 
+    // Update the global timeinfo struct
+    time_t now = time(NULL);
+    localtime_r(&now, &timeinfo);
 
     usleep((200000));
     lv_timer_handler(); // Run GUI
@@ -233,7 +236,7 @@ void loop() {
 
     // Battery updates
     for (unsigned char i = 0; i < ROOM_COUNT; ++i) {
-        getBatteryStatus(readings[i + 2 * ROOM_COUNT].currentValue, readings[i + 2 * ROOM_COUNT].readingIndex, &batteryIcon, &batteryColour);
+        getBatteryStatus(readings[i + 2 * ROOM_COUNT].currentValue, &batteryIcon, &batteryColour);
         snprintf(tempString, CHAR_LEN, "%c", batteryIcon);
         lv_label_set_text(*batteryLabels[i], tempString);
         lv_obj_set_style_text_color(*batteryLabels[i], batteryColour, LV_PART_MAIN);
@@ -243,9 +246,9 @@ void loop() {
     if (uv.updateTime > 0) {
         lv_obj_clear_flag(ui_UVArc, LV_OBJ_FLAG_HIDDEN);
         if (weather.isDay) {
-            snprintf(tempString, CHAR_LEN, "Updated %s", uv.time_string);
+            snprintf(tempString, sizeof(tempString), "Updated %.238s", uv.time_string);
         } else {
-            snprintf(tempString, CHAR_LEN, "");
+            tempString[0] = '\0';
         }
         lv_label_set_text(ui_UVUpdateTime, tempString);
         snprintf(tempString, CHAR_LEN, "%i", uv.index);
@@ -261,7 +264,7 @@ void loop() {
     // Update weather values
     if (weather.updateTime > 0) {
         lv_label_set_text(ui_FCConditions, weather.description);
-        snprintf(tempString, CHAR_LEN, "Updated %s", weather.time_string);
+        snprintf(tempString, CHAR_LEN, "Updated %.238s", weather.time_string);
         lv_label_set_text(ui_FCUpdateTime, tempString);
         char windString[CHAR_LEN + 20];
         snprintf(windString, sizeof(windString), "Wind %2.0f km/h %s", weather.windSpeed, weather.windDir);
@@ -303,25 +306,21 @@ void loop() {
         lv_obj_set_style_text_color(ui_WeatherStatus, lv_color_hex(COLOR_GREEN), LV_PART_MAIN);
     }
 
-    /*if (WiFi.status() == WL_CONNECTED) {
+    if (mqtt_connected) {
         lv_obj_set_style_text_color(ui_WiFiStatus, lv_color_hex(COLOR_GREEN), LV_PART_MAIN);
     } else {
         lv_obj_set_style_text_color(ui_WiFiStatus, lv_color_hex(COLOR_RED), LV_PART_MAIN);
-    }
+    } 
 
-    if (mqttClient.connected()) {
+    if (mqtt_connected) {
         lv_obj_set_style_text_color(ui_ServerStatus, lv_color_hex(COLOR_GREEN), LV_PART_MAIN);
     } else {
         lv_obj_set_style_text_color(ui_ServerStatus, lv_color_hex(COLOR_RED), LV_PART_MAIN);
     }
 
-    if (!getLocalTime(&timeinfo)) {
-        lv_label_set_text(ui_Time, "Syncing");
-    } else {
-        char timeString[CHAR_LEN];
-        strftime(timeString, sizeof(timeString), "%H:%M:%S", &timeinfo);
-        lv_label_set_text(ui_Time, timeString);
-    }*/
+    char timeString[CHAR_LEN];
+    strftime(timeString, sizeof(timeString), "%H:%M:%S", &timeinfo);
+    lv_label_set_text(ui_Time, timeString);
 
     if (!weather.isDay) {
         set_basic_text_color(lv_color_hex(COLOR_WHITE));
@@ -343,18 +342,16 @@ void loop() {
 }
 
 void invalidateOldReadings() {
-    if (time(NULL) > TIME_SYNC_THRESHOLD) {
-        for (int i = 0; i < sizeof(readings) / sizeof(readings[0]); i++) {
+        for (size_t i = 0; i < sizeof(readings) / sizeof(readings[0]); i++) {
             if ((time(NULL) > readings[i].lastMessageTime + (MAX_NO_MESSAGE_SEC))) {
                 readings[i].changeChar = CHAR_NO_MESSAGE;
                 snprintf(readings[i].output, 10, NO_READING);
                 readings[i].currentValue = 0.0;
             }
         }
-    }
 }
 
-void getBatteryStatus(float batteryValue, int readingIndex, char* iconCharacterPtr, lv_color_t* colorPtr) {
+void getBatteryStatus(float batteryValue, char* iconCharacterPtr, lv_color_t* colorPtr) {
     if (batteryValue > BATTERY_OK) {
         // Battery is ok
         *iconCharacterPtr = CHAR_BATTERY_GOOD;
@@ -379,6 +376,7 @@ void getBatteryStatus(float batteryValue, int readingIndex, char* iconCharacterP
 
 
 void* displayStatusMessages_t(void* pvParameters) {
+    (void)pvParameters;
     StatusMessage receivedMsg;
 
     while (true) {
@@ -392,7 +390,7 @@ void* displayStatusMessages_t(void* pvParameters) {
         // Wait for the specified duration before clearing the message.
         std::this_thread::sleep_for(std::chrono::seconds(receivedMsg.duration_s));
         // Clear the label after the duration has passed.
-        snprintf(statusMessageValue, CHAR_LEN, "");
+        statusMessageValue[0] = '\0';
     }
     return NULL;
 }

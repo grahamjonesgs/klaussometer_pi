@@ -11,6 +11,9 @@ CFLAGS := -std=c11 -O2 -Wall
 CXXFLAGS += -DRASPBERRY_PI
 CFLAGS += -DRASPBERRY_PI
 
+# Add dependency generation flags
+DEPFLAGS = -MMD -MP
+
 # Source directory (all project files are here)
 SRC_DIR := src
 
@@ -28,7 +31,7 @@ LDFLAGS := -lSDL2 \
            -ljsoncpp \
            -lssl \
            -lcrypto \
-		   -ljson-c
+           -ljson-c
 
 # Build directory
 BUILD_DIR := build
@@ -55,6 +58,9 @@ UI_C_OBJ := $(patsubst $(SRC_DIR)/UI/%.c,$(OBJ_DIR)/UI/%.o,$(UI_C_SRC))
 # All objects
 ALL_OBJECTS := $(PROJECT_CPP_OBJ) $(PROJECT_C_OBJ) $(UI_CPP_OBJ) $(UI_C_OBJ) $(LVGL_OBJ)
 
+# Dependency files
+ALL_DEPS := $(ALL_OBJECTS:.o=.d)
+
 # Output binary
 TARGET := $(BUILD_DIR)/klaussometer
 
@@ -80,25 +86,28 @@ $(TARGET): $(ALL_OBJECTS)
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@echo "Compiling $<..."
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(INCLUDES) -c $< -o $@
 
 # Compile project C files from src/
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 	@echo "Compiling $<..."
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+	$(CC) $(CFLAGS) $(DEPFLAGS) $(INCLUDES) -c $< -o $@
 
 # Compile UI C++ files
 $(OBJ_DIR)/UI/%.o: $(SRC_DIR)/UI/%.cpp
 	@echo "Compiling $<..."
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(INCLUDES) -c $< -o $@
 
 # Compile UI C files
 $(OBJ_DIR)/UI/%.o: $(SRC_DIR)/UI/%.c
 	@echo "Compiling $<..."
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+	$(CC) $(CFLAGS) $(DEPFLAGS) $(INCLUDES) -c $< -o $@
+
+# Include dependency files (if they exist)
+-include $(ALL_DEPS)
 
 # Clean build artifacts
 .PHONY: clean
@@ -134,7 +143,7 @@ debug: clean all
 .PHONY: release
 release: CXXFLAGS += -DNDEBUG -O3
 release: CFLAGS += -DNDEBUG -O3
-release: clean all 
+release: clean all
 
 # Show help
 .PHONY: help
@@ -159,3 +168,4 @@ print-vars:
 	@echo "UI_C_SRC: $(UI_C_SRC)"
 	@echo "LVGL_SRC count: $(words $(LVGL_SRC))"
 	@echo "ALL_OBJECTS count: $(words $(ALL_OBJECTS))"
+	@echo "ALL_DEPS count: $(words $(ALL_DEPS))"

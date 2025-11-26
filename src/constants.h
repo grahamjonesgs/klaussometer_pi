@@ -68,89 +68,19 @@ static const int STATUS_MESSAGE_TIME = 1;                 // Seconds an status m
 static const int MAX_SOLAR_TIME_STATUS_HOURS = 24;        // Max time in hours for charge / discharge that a message will be displayed for
 static const int CHECK_UPDATE_INTERVAL_SEC = 300;         // Interval between checking for OTA updates
 
-static const int WIFI_RETRY_DELAY_SEC = 5; // Delay between WiFi connection attempts
-static const int MQTT_RETRY_DELAY_SEC = 5; // Delay between MQTT connection attempts
-
-// Touch screen settings
-static const int I2C_SDA_PIN = 17;
-static const int I2C_SCL_PIN = 18;
-static const int TOUCH_INT = -1;
-static const int TOUCH_RST = 38;
-static const int TFT_BL = 10;
-
-static const int WIFI_RETRIES = 10; // Number of times to retry the wifi before a restart
-
-static const int PIN_SD_CMD = 11;
-static const int PIN_SD_CLK = 12;
-static const int PIN_SD_D0 = 13;
-
 static const int COLOR_RED = 0xFA0000;
 static const int COLOR_YELLOW = 0xF7EA48;
 static const int COLOR_GREEN = 0x205602;
 static const int COLOR_BLACK = 0x000000;
 static const int COLOR_WHITE = 0xFFFFFF;
 
-// Define LCD panel constants
-static const int LCD_DE_PIN = 40;
-static const int LCD_VSYNC_PIN = 41;
-static const int LCD_HSYNC_PIN = 39;
-static const int LCD_PCLK_PIN = 42;
-
-static const int LCD_R0_PIN = 45;
-static const int LCD_R1_PIN = 48;
-static const int LCD_R2_PIN = 47;
-static const int LCD_R3_PIN = 21;
-static const int LCD_R4_PIN = 14;
-
-static const int LCD_G0_PIN = 5;
-static const int LCD_G1_PIN = 6;
-static const int LCD_G2_PIN = 7;
-static const int LCD_G3_PIN = 15;
-static const int LCD_G4_PIN = 16;
-static const int LCD_G5_PIN = 4;
-
-static const int LCD_B0_PIN = 8;
-static const int LCD_B1_PIN = 3;
-static const int LCD_B2_PIN = 46;
-static const int LCD_B3_PIN = 9;
-static const int LCD_B4_PIN = 1;
-static const int LCD_B5_PIN = 2;
-static const int LCD_HSYNC_POLARITY = 0;
-static const int LCD_HSYNC_FRONT_PORCH = 40;
-static const int LCD_HSYNC_PULSE_WIDTH = 8; // was 48
-static const int LCD_HSYNC_BACK_PORCH = 128;
-
-static const int LCD_VSYNC_POLARITY = 1;
-static const int LCD_VSYNC_FRONT_PORCH = 13;
-static const int LCD_VSYNC_PULSE_WIDTH = 8; // was 3
-static const int LCD_VSYNC_BACK_PORCH = 45;
-
-static const int LCD_PCLK_ACTIVE_NEG = 1;
-static const int LCD_PREFER_SPEED = 12000000; // was 16000000
-static const int LCD_WIDTH = 1024;
-static const int LCD_HEIGHT = 600;
-
-// For Backlight PWM
-static const int PWMFreq = 5000;
-static const int PWMChannel = 4;
-static const int PWMResolution = 10;
-static const float MAX_BRIGHTNESS = 1.0;
-static const float MIN_BRIGHTNESS = 0.1;
-
-// microSD card
-#define PIN_SD_CMD 11
-#define PIN_SD_CLK 12
-#define PIN_SD_D0 13
-static const int SD_CS_PIN = 5;
-static const char* SOLAR_DATA_FILENAME = "/solar_data.bin";
-static const char* WEATHER_DATA_FILENAME = "/weather_data.bin";
-static const char* UV_DATA_FILENAME = "/uv_data.bin";
-static const char* READINGS_DATA_FILENAME = "/readings_data.bin";
+#define SOLAR_DATA_FILENAME "solar_data.bin"
+#define WEATHER_DATA_FILENAME "weather_data.bin"
+#define UV_DATA_FILENAME "uv_data.bin"
+#define READINGS_DATA_FILENAME "readings_data.bin"
 
 // Log settings
 #define NORMAL_LOG_BUFFER_SIZE 500
-#define ERROR_LOG_BUFFER_SIZE 500
-
-#define TIME_SYNC_THRESHOLD 1700000000 // Time after which readings are validated
+#define ERROR_LOG_BUFFER_SIZE 50
 
 #endif // CONSTANTS_H
