@@ -19,12 +19,14 @@ Arduino Core 0
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <signal.h>
 
 // Create network objects
 pthread_mutex_t mqttMutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t httpMutex = PTHREAD_MUTEX_INITIALIZER;
 struct mosquitto* mosq = NULL;
 bool mqtt_connected = false;
+volatile bool running = true;
 
 // Threads
 pthread_t thread_mqtt, thread_weather, thread_uv, thread_solar_token, thread_current_solar, thread_daily_solar, thread_monthly_solar, thread_display_status,
@@ -205,7 +207,7 @@ void loop() {
     time_t now = time(NULL);
     localtime_r(&now, &timeinfo);
 
-    usleep((200000));
+    usleep(200000);
     lv_timer_handler(); // Run GUI
 
     // Update values
@@ -404,16 +406,31 @@ void logAndPublish(const char* messageBuffer) {
 void errorPublish(const char* messageBuffer) {
     printf("ERROR: %s\n", messageBuffer);
 }
+
+void signal_handler(int sig) {
+    (void)sig;
+    running = false;
+}
+
 int main(int argc, char* argv[]) {
     (void)argc;
     (void)argv;
-
+    
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+    
     setup();
-
-    while (1) {
+    
+    while (running) {
         loop();
-        usleep(5000); // 5ms delay, adjust as needed
+        usleep(5000);
     }
-
+    
+    // Cleanup
+    mosquitto_loop_stop(mosq, true);
+    mosquitto_destroy(mosq);
+    mosquitto_lib_cleanup();
+    
+    printf("Klaussometer shutdown complete\n");
     return 0;
 }

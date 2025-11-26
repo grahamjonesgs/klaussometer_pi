@@ -39,7 +39,7 @@ void set_solar_values() {
             struct tm ts_end;
             time_t end_time = solar.currentUpdateTime + remain_minutes_round * 60; // find time of estimated end of battery charge
             char time_buf_end[CHAR_LEN];
-            ts_end = *localtime(&end_time);
+            localtime_r(&end_time, &ts_end);
             strftime(time_buf_end, sizeof(time_buf_end), "%H:%M:%S", &ts_end);
 
             if ((floor(remain_hours) == 1) && (remain_minutes > 0)) {
@@ -89,10 +89,10 @@ void set_solar_values() {
             } else {
                 lv_label_set_text(ui_ChargingLabel, "");
                 lv_label_set_text(ui_ChargingTime, "");
-                lv_obj_set_style_arc_color(ui_BatteryArc, lv_color_hex(0x2095F6),
-                                           LV_PART_INDICATOR | LV_STATE_DEFAULT); // Set arc to red
-                lv_obj_set_style_bg_color(ui_BatteryArc, lv_color_hex(0x2095F6),
-                                          LV_PART_KNOB | LV_STATE_DEFAULT); // Set arc to red
+                lv_obj_set_style_arc_color(ui_BatteryArc, lv_color_hex(COLOR_BLUE),
+                                           LV_PART_INDICATOR | LV_STATE_DEFAULT); // Set arc to blue
+                lv_obj_set_style_bg_color(ui_BatteryArc, lv_color_hex(COLOR_BLUE),
+                                          LV_PART_KNOB | LV_STATE_DEFAULT); // Set arc to blue
             }
             lv_obj_set_style_arc_color(ui_SolarArc, lv_color_hex(COLOR_GREEN),
                                        LV_PART_INDICATOR | LV_STATE_DEFAULT); // Set arc to green
@@ -107,7 +107,7 @@ void set_solar_values() {
         struct tm ts;
         char time_buf[CHAR_LEN];
         time_t updateTime = solar.currentUpdateTime;
-        ts = *localtime(&updateTime);
+        localtime_r(&updateTime, &ts);
         strftime(time_buf, sizeof(time_buf), "%H:%M:%S", &ts);
         snprintf(tempString, sizeof(tempString), "Values as of %s\nReceived at %s", solar.time, time_buf);
         lv_label_set_text(ui_AsofTimeLabel, tempString);

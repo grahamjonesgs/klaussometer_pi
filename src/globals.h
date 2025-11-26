@@ -80,7 +80,6 @@ struct LogEntry {
 
 // main
 void pin_init();
-void mqtt_connect();
 void set_solar_values();
 void getBatteryStatus(float batteryValue, char* iconCharacterPtr, lv_color_t* colorPtr);
 void* displayStatusMessages_t(void* pvParameters);
@@ -94,7 +93,6 @@ void time_init();
 void* connectivity_manager_t(void* pvParameters);
 
 // mqtt
-void mqtt_connect();
 void on_connect_callback(struct mosquitto* mosq, void* obj, int rc);
 void on_disconnect_callback(struct mosquitto* mosq, void* obj, int rc);
 void on_message_callback(struct mosquitto* mosq, void* obj, const struct mosquitto_message* msg);

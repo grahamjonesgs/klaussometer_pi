@@ -11,7 +11,6 @@ extern pthread_mutex_t httpMutex;
 
 #define SOLAR_TOKEN_LENGTH 2048
 char solar_token[SOLAR_TOKEN_LENGTH] = {0};
-
 const size_t JSON_PAYLOAD_SIZE = 4096;
 const size_t URL_BUFFER_SIZE = 512;
 char url_buffer[URL_BUFFER_SIZE] = {0};

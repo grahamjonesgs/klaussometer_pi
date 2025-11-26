@@ -79,6 +79,7 @@ static const int COLOR_YELLOW = 0xF7EA48;
 static const int COLOR_GREEN = 0x205602;
 static const int COLOR_BLACK = 0x000000;
 static const int COLOR_WHITE = 0xFFFFFF;
+static const int COLOR_BLUE = 0x2095F6;
 
 #define SOLAR_DATA_FILENAME "solar_data.bin"
 #define WEATHER_DATA_FILENAME "weather_data.bin"
