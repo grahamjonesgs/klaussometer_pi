@@ -8,7 +8,7 @@ extern Solar solar;
 
 // Set solar values in GUI
 void set_solar_values() {
-    char tempString[CHAR_LEN];
+    char tempString[CHAR_LEN*5];
     // Set screen values
     if (solar.currentUpdateTime > 0) {
         lv_obj_clear_flag(ui_BatteryArc, LV_OBJ_FLAG_HIDDEN);
@@ -44,13 +44,12 @@ void set_solar_values() {
             strftime(time_buf_end, sizeof(time_buf_end), "%H:%M:%S", &ts_end);
 
             if ((floor(remain_hours) == 1) && (remain_minutes > 0)) {
-                snprintf(tempString, CHAR_LEN, "%2.0f hour %i mins\n remaining\n Until %s", remain_hours, remain_minutes_round % 60, time_buf_end);
+                snprintf(tempString, sizeof(tempString), "%2.0f hour %i mins\n remaining\n Until %s", remain_hours, remain_minutes_round % 60, time_buf_end);
             } else {
                 if ((remain_minutes_round > 0) && (remain_hours < MAX_SOLAR_TIME_STATUS_HOURS)) {
-                    snprintf(tempString, CHAR_LEN, "%2.0f hours %i mins\n remaining\n Until %s", remain_hours, remain_minutes_round % 60, time_buf_end);
+                    snprintf(tempString, sizeof(tempString), "%2.0f hours %i mins\n remaining\n Until %s", remain_hours, remain_minutes_round % 60, time_buf_end);
                 } else {
-                    snprintf(tempString, CHAR_LEN,
-                             ""); // Don't print for too long time
+                    tempString[0] = '\0'; // Don't print for too long time
                 }
             }
             lv_label_set_text(ui_ChargingTime, tempString);
@@ -74,13 +73,12 @@ void set_solar_values() {
                     if ((remain_minutes_round > 0) && (remain_hours < MAX_SOLAR_TIME_STATUS_HOURS)) {
                         snprintf(tempString, CHAR_LEN, "%2.0f hours %i mins to\n fully charged", remain_hours, remain_minutes_round % 60);
                     } else {
-                        snprintf(tempString, CHAR_LEN,
-                                 ""); // Don't print for too long time
+                        tempString[0] = '\0'; // Don't print for too long time
                     }
                 }
 
                 if (remain_minutes == 0) {
-                    snprintf(tempString, CHAR_LEN, "");
+                    tempString[0] = '\0';
                 }
 
                 lv_label_set_text(ui_ChargingTime, tempString);
@@ -109,9 +107,10 @@ void set_solar_values() {
         // Set solar update times
         struct tm ts;
         char time_buf[CHAR_LEN];
-        ts = *localtime(&solar.currentUpdateTime);
+        time_t updateTime = solar.currentUpdateTime;
+        ts = *localtime(&updateTime);
         strftime(time_buf, sizeof(time_buf), "%H:%M:%S", &ts);
-        snprintf(tempString, CHAR_LEN, "Values as of %s\nReceived at %s", solar.time, time_buf);
+        snprintf(tempString, sizeof(tempString), "Values as of %s\nReceived at %s", solar.time, time_buf);
         lv_label_set_text(ui_AsofTimeLabel, tempString);
 
         // Set grid bought amounts

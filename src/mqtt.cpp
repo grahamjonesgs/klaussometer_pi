@@ -42,7 +42,7 @@ void process_mqtt_message(const char* topic, char* payload, int payloadlen) {
     
     if (!messageProcessed) {
         char log_msg[CHAR_LEN];
-        snprintf(log_msg, CHAR_LEN, "Unhandled MQTT topic: %s, message: %s", topic, recMessage);
+        snprintf(log_msg, CHAR_LEN, "Unhandled MQTT topic: %.100s, message: %.100s", topic, recMessage);
         logAndPublish(log_msg);
     }
     

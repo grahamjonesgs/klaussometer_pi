@@ -15,7 +15,7 @@ char solar_token[SOLAR_TOKEN_LENGTH] = {0};
 const size_t JSON_PAYLOAD_SIZE = 4096;
 const size_t URL_BUFFER_SIZE = 512;
 char url_buffer[URL_BUFFER_SIZE] = {0};
-const size_t POST_BUFFER_SIZE = 512;
+const size_t POST_BUFFER_SIZE = 1024;
 char post_buffer[POST_BUFFER_SIZE] = {0};
 
 // Callback structure for libcurl

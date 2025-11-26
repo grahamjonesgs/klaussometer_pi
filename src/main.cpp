@@ -126,8 +126,7 @@ void setup() {
     ui_init();
 
     // Set initial UI values
-    std::string versionText = "V " + std::string("Dummy Version");
-    lv_label_set_text(ui_Version, versionText.c_str());
+    lv_label_set_text(ui_Version, "");
 
     for (unsigned char i = 0; i < ROOM_COUNT; ++i) {
         lv_label_set_text(*roomNames[i], readings[i].description);

@@ -109,10 +109,26 @@ $(OBJ_DIR)/UI/%.o: $(SRC_DIR)/UI/%.c
 # Include dependency files (if they exist)
 -include $(ALL_DEPS)
 
-# Clean build artifacts
+# Clean only project code (not LVGL)
+.PHONY: clean-project
+clean-project:
+	@echo "Cleaning project files (keeping LVGL)..."
+	rm -f $(PROJECT_CPP_OBJ) $(PROJECT_C_OBJ)
+	rm -f $(UI_CPP_OBJ) $(UI_C_OBJ)
+	rm -f $(PROJECT_CPP_OBJ:.o=.d) $(PROJECT_C_OBJ:.o=.d)
+	rm -f $(UI_CPP_OBJ:.o=.d) $(UI_C_OBJ:.o=.d)
+	rm -f $(TARGET)
+
+# Clean only LVGL (rare)
+.PHONY: clean-lvgl
+clean-lvgl:
+	@echo "Cleaning LVGL files..."
+	rm -rf $(OBJ_DIR)/lvgl
+
+# Full clean (everything)
 .PHONY: clean
 clean:
-	@echo "Cleaning build artifacts..."
+	@echo "Cleaning all build artifacts..."
 	rm -rf $(BUILD_DIR)
 
 # Install dependencies (Debian/Raspbian)
@@ -151,13 +167,15 @@ help:
 	@echo "Klaussometer Raspberry Pi Build System"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all          - Build the project (default)"
-	@echo "  clean        - Remove build artifacts"
-	@echo "  install-deps - Install required dependencies"
-	@echo "  run          - Build and run the application"
-	@echo "  debug        - Build with debug symbols"
-	@echo "  release      - Build optimized release version"
-	@echo "  help         - Show this help message"
+	@echo "  all           - Build the project (default)"
+	@echo "  clean         - Remove ALL build artifacts"
+	@echo "  clean-project - Remove only project files (keep LVGL)"
+	@echo "  clean-lvgl    - Remove only LVGL files"
+	@echo "  install-deps  - Install required dependencies"
+	@echo "  run           - Build and run the application"
+	@echo "  debug         - Build with debug symbols"
+	@echo "  release       - Build optimized release version"
+	@echo "  help          - Show this help message"
 
 # Print variables for debugging the Makefile
 .PHONY: print-vars

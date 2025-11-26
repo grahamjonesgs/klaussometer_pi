@@ -10,6 +10,7 @@ extern bool mqtt_connected;
 
 // Callback when connection is established
 void on_connect_callback(struct mosquitto *mosq, void *obj, int rc) {
+    (void)obj;
     if(rc == 0) {
         mqtt_connected = true;
         logAndPublish("Connected to the MQTT broker");
@@ -28,6 +29,8 @@ void on_connect_callback(struct mosquitto *mosq, void *obj, int rc) {
 
 // Callback when connection is lost
 void on_disconnect_callback(struct mosquitto *mosq, void *obj, int rc) {
+    (void)obj;
+    (void)mosq;
     mqtt_connected = false;
     if(rc != 0) {
         logAndPublish("MQTT connection lost unexpectedly");
@@ -36,6 +39,8 @@ void on_disconnect_callback(struct mosquitto *mosq, void *obj, int rc) {
 
 // Callback when message is received
 void on_message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg) {
+    (void)mosq;
+    (void)obj;
     // This will be handled in mqtt.cpp - just forward to processing function
     process_mqtt_message(msg->topic, (char*)msg->payload, msg->payloadlen);
 }
@@ -63,6 +68,7 @@ void mqtt_connect() {
 }
 
 void* connectivity_manager_t(void* pvParameters) {
+    (void)pvParameters;
     bool wasDisconnected;
     
     while (true) {
