@@ -1,31 +1,31 @@
 #ifndef GLOBALS_H
 #define GLOBALS_H
 
-#include <lvgl.h>
 #include "UI/ui.h"
 #include "config.h"
 #include "constants.h"
 #include <cctype>
-#include <cstring>
+#include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
+#include <lvgl.h>
+#include <mosquitto.h>
+#include <pthread.h>
 #include <string>
 #include <unistd.h>
-#include <cmath>
-#include <pthread.h>
-#include <mosquitto.h>
 
-typedef struct __attribute__((packed)) {                // Array to hold the incoming measurement
-    const char description[CHAR_LEN]; // Currently set to 50 chars long
-    const char topic[CHAR_LEN];       // MQTT topic
-    char output[CHAR_LEN];            // To be output to screen
-    float currentValue;               // Current value received
-    float lastValue[STORED_READING];  // Defined that the zeroth element is the oldest
-    uint8_t changeChar;               // To indicate change in status
-    bool enoughData;                  // to indicate is a full set of STORED_READING number of data points received
-    int dataType;                     // Type of data received
-    int readingIndex;                 // Index of current reading max will be STORED_READING
-    time_t lastMessageTime;           // Time this was last updated
+typedef struct __attribute__((packed)) { // Array to hold the incoming measurement
+    const char description[CHAR_LEN];    // Currently set to 50 chars long
+    const char topic[CHAR_LEN];          // MQTT topic
+    char output[CHAR_LEN];               // To be output to screen
+    float currentValue;                  // Current value received
+    float lastValue[STORED_READING];     // Defined that the zeroth element is the oldest
+    uint8_t changeChar;                  // To indicate change in status
+    bool enoughData;                     // to indicate is a full set of STORED_READING number of data points received
+    int dataType;                        // Type of data received
+    int readingIndex;                    // Index of current reading max will be STORED_READING
+    time_t lastMessageTime;              // Time this was last updated
 } Readings;
 
 typedef struct __attribute__((packed)) {
@@ -64,7 +64,7 @@ typedef struct __attribute__((packed)) {
 } Solar;
 
 typedef struct __attribute__((packed)) {
-    size_t size;    // Size of the data block that follows the header
+    size_t size;      // Size of the data block that follows the header
     uint8_t checksum; // Simple XOR checksum of the data block
 } DataHeader;
 
@@ -72,8 +72,6 @@ typedef struct {
     char text[CHAR_LEN];
     int duration_s; // Duration in seconds
 } StatusMessage;
-
-
 
 struct LogEntry {
     char message[CHAR_LEN];
@@ -97,9 +95,9 @@ void* connectivity_manager_t(void* pvParameters);
 
 // mqtt
 void mqtt_connect();
-void on_connect_callback(struct mosquitto *mosq, void *obj, int rc);
-void on_disconnect_callback(struct mosquitto *mosq, void *obj, int rc);
-void on_message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg);
+void on_connect_callback(struct mosquitto* mosq, void* obj, int rc);
+void on_disconnect_callback(struct mosquitto* mosq, void* obj, int rc);
+void on_message_callback(struct mosquitto* mosq, void* obj, const struct mosquitto_message* msg);
 void process_mqtt_message(const char* topic, char* payload, int payloadlen);
 void update_readings(char* recMessage, int index, int dataType);
 void update_temperature(char* recMessage, int index);
@@ -121,12 +119,7 @@ void* get_monthly_solar_t(void* pvParameters);
 const char* degreesToDirection(double degrees);
 const char* wmoToText(int code, bool isDay);
 
-// OAT
-std::string getUptime();
-int compareVersions(const std::string& v1, const std::string& v2);
-std::string getLogBufferHTML(LogEntry* logBuffer, volatile int& logBufferIndex, pthread_mutex_t logMutex, int log_size);
-
-// SDCard
+// saveload
 uint8_t calculateChecksum(const void* data_ptr, size_t size);
 bool saveDataBlock(const char* filename, const void* data_ptr, size_t size);
 bool loadDataBlock(const char* filename, void* data_ptr, size_t expected_size);

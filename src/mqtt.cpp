@@ -1,6 +1,6 @@
 #include "globals.h"
 
-extern struct mosquitto *mosq;
+extern struct mosquitto* mosq;
 extern pthread_mutex_t mqttMutex;
 extern Readings readings[];
 extern int numberOfReadings;
@@ -8,16 +8,16 @@ extern int numberOfReadings;
 // Process received MQTT message
 void process_mqtt_message(const char* topic, char* payload, int payloadlen) {
     char recMessage[CHAR_LEN];
-    
+
     // Copy payload and null-terminate
-    if(payloadlen >= CHAR_LEN) {
+    if (payloadlen >= CHAR_LEN) {
         logAndPublish("MQTT message exceeds buffer size");
         return;
     }
-    
+
     memcpy(recMessage, payload, payloadlen);
     recMessage[payloadlen] = '\0';
-    
+
     // Validate message
     if (payloadlen == 0 || recMessage[0] == '\0') {
         char log_msg[CHAR_LEN];
@@ -25,30 +25,27 @@ void process_mqtt_message(const char* topic, char* payload, int payloadlen) {
         logAndPublish(log_msg);
         return;
     }
-    
+
     // Find matching topic and process
     bool messageProcessed = false;
     for (int i = 0; i < numberOfReadings; i++) {
         if (strcmp(topic, readings[i].topic) == 0) {
-            if (readings[i].dataType == DATA_TEMPERATURE || 
-                readings[i].dataType == DATA_HUMIDITY || 
-                readings[i].dataType == DATA_BATTERY) {
+            if (readings[i].dataType == DATA_TEMPERATURE || readings[i].dataType == DATA_HUMIDITY || readings[i].dataType == DATA_BATTERY) {
                 update_readings(recMessage, i, readings[i].dataType);
                 messageProcessed = true;
             }
             break;
         }
     }
-    
+
     if (!messageProcessed) {
         char log_msg[CHAR_LEN];
         snprintf(log_msg, CHAR_LEN, "Unhandled MQTT topic: %.100s, message: %.100s", topic, recMessage);
         logAndPublish(log_msg);
     }
-    
+
     saveDataBlock(READINGS_DATA_FILENAME, readings, sizeof(Readings) * numberOfReadings);
 }
-
 
 void update_readings(char* recMessage, int index, int dataType) {
     float averageHistory;

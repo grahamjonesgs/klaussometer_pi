@@ -13,24 +13,21 @@ Arduino Core 0
 */
 
 #include "globals.h"
-#include <queue>
-#include <mutex>
-#include <condition_variable>
-#include <thread>
-#include <chrono>
 #include <SDL2/SDL.h>
-
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <queue>
+#include <thread>
 
 // Create network objects
 pthread_mutex_t mqttMutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t httpMutex = PTHREAD_MUTEX_INITIALIZER;
-struct mosquitto *mosq = NULL;
+struct mosquitto* mosq = NULL;
 bool mqtt_connected = false;
 
 // Threads
-pthread_t thread_mqtt, thread_weather, thread_uv, thread_solar_token,
-    thread_current_solar, thread_daily_solar, thread_monthly_solar,
-    thread_display_status,
+pthread_t thread_mqtt, thread_weather, thread_uv, thread_solar_token, thread_current_solar, thread_daily_solar, thread_monthly_solar, thread_display_status,
     thread_connectivity_manager;
 
 // Global variables
@@ -48,7 +45,6 @@ char chip_id[CHAR_LEN];
 // Status messages
 char statusMessageValue[CHAR_LEN];
 
-
 // Screen setting
 static lv_display_t* disp = NULL;
 static lv_indev_t* mouse = NULL;
@@ -62,12 +58,11 @@ static lv_obj_t** batteryLabels[ROOM_COUNT] = BATTERY_LABELS;
 static lv_obj_t** directionLabels[ROOM_COUNT] = DIRECTION_LABELS;
 static lv_obj_t** humidityLabels[ROOM_COUNT] = HUMIDITY_LABELS;
 
-
 void setup() {
     // delay one second to enabling monitoring
     snprintf(chip_id, CHAR_LEN, "Pi5");
     printf("Starting Klaussometer 4.0 Display %s\n", chip_id);
-    
+
     // Initialize LVGL and SDL display
     lv_init();
     disp = lv_sdl_window_create(1024, 600);
@@ -78,48 +73,48 @@ void setup() {
         SDL_SetWindowTitle(window, "Klaussometer");
     }
 
-        if (loadDataBlock(SOLAR_DATA_FILENAME, &solar, sizeof(solar))) {
-            logAndPublish("Solar state restored OK");
-        } else {
-            logAndPublish("Solar state restore failed");
-        }
+    if (loadDataBlock(SOLAR_DATA_FILENAME, &solar, sizeof(solar))) {
+        logAndPublish("Solar state restored OK");
+    } else {
+        logAndPublish("Solar state restore failed");
+    }
 
-        if (loadDataBlock(WEATHER_DATA_FILENAME, &weather, sizeof(weather))) {
-            logAndPublish("Weather state restored OK");
-        } else {
-            logAndPublish("Weather state restore failed");
-        }
+    if (loadDataBlock(WEATHER_DATA_FILENAME, &weather, sizeof(weather))) {
+        logAndPublish("Weather state restored OK");
+    } else {
+        logAndPublish("Weather state restore failed");
+    }
 
-        if (loadDataBlock(UV_DATA_FILENAME, &uv, sizeof(uv))) {
-            logAndPublish("UV state restored OK");
-        } else {
-            logAndPublish("UV state restore failed");
-        }
+    if (loadDataBlock(UV_DATA_FILENAME, &uv, sizeof(uv))) {
+        logAndPublish("UV state restored OK");
+    } else {
+        logAndPublish("UV state restore failed");
+    }
 
-        if (loadDataBlock(READINGS_DATA_FILENAME, &readings, sizeof(readings))) {
-            logAndPublish("Readings state restored OK");
-            invalidateOldReadings();
-        } else {
-            logAndPublish("Readings state restore failed");
-        }
+    if (loadDataBlock(READINGS_DATA_FILENAME, &readings, sizeof(readings))) {
+        logAndPublish("Readings state restored OK");
+        invalidateOldReadings();
+    } else {
+        logAndPublish("Readings state restore failed");
+    }
 
     mosquitto_lib_init();
-    
+
     // Create mosquitto client instance
     mosq = mosquitto_new(NULL, true, NULL);
-    if(!mosq) {
+    if (!mosq) {
         logAndPublish("Failed to create mosquitto client");
         exit(1);
     }
-    
+
     // Set callbacks
     mosquitto_connect_callback_set(mosq, on_connect_callback);
     mosquitto_disconnect_callback_set(mosq, on_disconnect_callback);
     mosquitto_message_callback_set(mosq, on_message_callback);
-    
+
     // Connect to MQTT broker
     mqtt_connect();
-    
+
     // Start mosquitto network loop in a separate thread
     mosquitto_loop_start(mosq);
 
@@ -190,7 +185,6 @@ void setup() {
     }
     storage.end();*/
 
-
     // Start tasks
     pthread_create(&thread_weather, NULL, get_weather_t, NULL);
     pthread_create(&thread_uv, NULL, get_uv_t, NULL);
@@ -213,7 +207,6 @@ void loop() {
 
     usleep((200000));
     lv_timer_handler(); // Run GUI
-
 
     // Update values
     for (unsigned char i = 0; i < ROOM_COUNT; ++i) {
@@ -309,7 +302,7 @@ void loop() {
         lv_obj_set_style_text_color(ui_WiFiStatus, lv_color_hex(COLOR_GREEN), LV_PART_MAIN);
     } else {
         lv_obj_set_style_text_color(ui_WiFiStatus, lv_color_hex(COLOR_RED), LV_PART_MAIN);
-    } 
+    }
 
     if (mqtt_connected) {
         lv_obj_set_style_text_color(ui_ServerStatus, lv_color_hex(COLOR_GREEN), LV_PART_MAIN);
@@ -341,13 +334,13 @@ void loop() {
 }
 
 void invalidateOldReadings() {
-        for (size_t i = 0; i < sizeof(readings) / sizeof(readings[0]); i++) {
-            if ((time(NULL) > readings[i].lastMessageTime + (MAX_NO_MESSAGE_SEC))) {
-                readings[i].changeChar = CHAR_NO_MESSAGE;
-                snprintf(readings[i].output, 10, NO_READING);
-                readings[i].currentValue = 0.0;
-            }
+    for (size_t i = 0; i < sizeof(readings) / sizeof(readings[0]); i++) {
+        if ((time(NULL) > readings[i].lastMessageTime + (MAX_NO_MESSAGE_SEC))) {
+            readings[i].changeChar = CHAR_NO_MESSAGE;
+            snprintf(readings[i].output, 10, NO_READING);
+            readings[i].currentValue = 0.0;
         }
+    }
 }
 
 void getBatteryStatus(float batteryValue, char* iconCharacterPtr, lv_color_t* colorPtr) {
@@ -373,7 +366,6 @@ void getBatteryStatus(float batteryValue, char* iconCharacterPtr, lv_color_t* co
     }
 }
 
-
 void* displayStatusMessages_t(void* pvParameters) {
     (void)pvParameters;
     StatusMessage receivedMsg;
@@ -381,7 +373,9 @@ void* displayStatusMessages_t(void* pvParameters) {
     while (true) {
         {
             std::unique_lock<std::mutex> lock(statusQueueMutex);
-            statusQueueCV.wait(lock, []{ return !statusMessageQueue.empty(); });
+            statusQueueCV.wait(lock, [] {
+                return !statusMessageQueue.empty();
+            });
             receivedMsg = statusMessageQueue.front();
             statusMessageQueue.pop();
         }
@@ -396,7 +390,6 @@ void* displayStatusMessages_t(void* pvParameters) {
 
 void logAndPublish(const char* messageBuffer) {
     printf("LOG: %s\n", messageBuffer);
-    
 
     StatusMessage msg;
     snprintf(msg.text, CHAR_LEN, "%s", messageBuffer);
@@ -410,22 +403,17 @@ void logAndPublish(const char* messageBuffer) {
 
 void errorPublish(const char* messageBuffer) {
     printf("ERROR: %s\n", messageBuffer);
-    
-  
 }
-int main(int argc, char *argv[])
-{
+int main(int argc, char* argv[]) {
     (void)argc;
     (void)argv;
-    
+
     setup();
-    
+
     while (1) {
         loop();
-        usleep(5000);  // 5ms delay, adjust as needed
+        usleep(5000); // 5ms delay, adjust as needed
     }
-    
+
     return 0;
 }
-
-

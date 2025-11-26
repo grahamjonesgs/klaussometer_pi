@@ -1,14 +1,13 @@
 
 #include "globals.h"
 
-
 extern Readings readings[];
 extern Weather weather;
 extern Solar solar;
 
 // Set solar values in GUI
 void set_solar_values() {
-    char tempString[CHAR_LEN*5];
+    char tempString[CHAR_LEN * 5];
     // Set screen values
     if (solar.currentUpdateTime > 0) {
         lv_obj_clear_flag(ui_BatteryArc, LV_OBJ_FLAG_HIDDEN);

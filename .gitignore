@@ -2,3 +2,4 @@ src/config.h
 build
 SL/backup
 SL/autosave
+*.bin

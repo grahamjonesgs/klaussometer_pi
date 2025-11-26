@@ -3,12 +3,12 @@
 extern Solar solar;
 
 uint8_t calculateChecksum(const void* data_ptr, size_t size) {
-  uint8_t sum = 0;
-  const uint8_t* bytePtr = (const uint8_t*)data_ptr;
-  for (size_t i = 0; i < size; ++i) {
-    sum ^= bytePtr[i];
-  }
-  return sum;
+    uint8_t sum = 0;
+    const uint8_t* bytePtr = (const uint8_t*)data_ptr;
+    for (size_t i = 0; i < size; ++i) {
+        sum ^= bytePtr[i];
+    }
+    return sum;
 }
 
 bool saveDataBlock(const char* filename, const void* data_ptr, size_t size) {
@@ -41,14 +41,12 @@ bool saveDataBlock(const char* filename, const void* data_ptr, size_t size) {
 
     if (bytesWritten != size) {
         char log_message[CHAR_LEN];
-        snprintf(log_message, sizeof(log_message), 
-                 "Failed to write all data to %s. Wrote %zu of %zu bytes", 
-                 filename, bytesWritten, size);
+        snprintf(log_message, sizeof(log_message), "Failed to write all data to %s. Wrote %zu of %zu bytes", filename, bytesWritten, size);
         logAndPublish(log_message);
         return false;
     }
 
-    return true; 
+    return true;
 }
 
 bool loadDataBlock(const char* filename, void* data_ptr, size_t expected_size) {
@@ -76,9 +74,7 @@ bool loadDataBlock(const char* filename, void* data_ptr, size_t expected_size) {
     // 2. Verify size matches what we expect
     if (header.size != expected_size) {
         char log_message[CHAR_LEN];
-        snprintf(log_message, sizeof(log_message), 
-                 "Data size mismatch in %s. Header: %zu, Expected: %zu", 
-                 filename, header.size, expected_size);
+        snprintf(log_message, sizeof(log_message), "Data size mismatch in %s. Header: %zu, Expected: %zu", filename, header.size, expected_size);
         logAndPublish(log_message);
         fclose(dataFile);
         return false;
@@ -90,9 +86,7 @@ bool loadDataBlock(const char* filename, void* data_ptr, size_t expected_size) {
 
     if (bytesRead != expected_size) {
         char log_message[CHAR_LEN];
-        snprintf(log_message, sizeof(log_message), 
-                 "Failed to read all data from %s. Read %zu of %zu bytes", 
-                 filename, bytesRead, expected_size);
+        snprintf(log_message, sizeof(log_message), "Failed to read all data from %s. Read %zu of %zu bytes", filename, bytesRead, expected_size);
         logAndPublish(log_message);
         return false;
     }
@@ -102,9 +96,7 @@ bool loadDataBlock(const char* filename, void* data_ptr, size_t expected_size) {
 
     if (header.checksum != calculated) {
         char log_message[CHAR_LEN];
-        snprintf(log_message, sizeof(log_message), 
-                 "Checksum failed for %s! Stored: 0x%02X, Calculated: 0x%02X", 
-                 filename, header.checksum, calculated);
+        snprintf(log_message, sizeof(log_message), "Checksum failed for %s! Stored: 0x%02X, Calculated: 0x%02X", filename, header.checksum, calculated);
         logAndPublish(log_message);
         return false;
     }
