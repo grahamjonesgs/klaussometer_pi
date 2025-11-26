@@ -133,7 +133,7 @@ debug: clean all
 .PHONY: release
 release: CXXFLAGS += -DNDEBUG -O3
 release: CFLAGS += -DNDEBUG -O3
-release: clean all
+release: clean all 
 
 # Show help
 .PHONY: help
