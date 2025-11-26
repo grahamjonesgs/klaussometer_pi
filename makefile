@@ -27,7 +27,8 @@ LDFLAGS := -lSDL2 \
            -lmosquitto \
            -ljsoncpp \
            -lssl \
-           -lcrypto
+           -lcrypto \
+		   -ljson-c
 
 # Build directory
 BUILD_DIR := build
@@ -116,7 +117,7 @@ install-deps:
 		libjsoncpp-dev \
 		libssl-dev \
 		libsdl2-dev \
-		json-c 
+		libjson-c-dev
 
 # Run the application
 .PHONY: run

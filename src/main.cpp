@@ -21,8 +21,15 @@ Arduino Core 0
 
 // Create network objects
 pthread_mutex_t mqttMutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t httpMutex = PTHREAD_MUTEX_INITIALIZER;
 struct mosquitto *mosq = NULL;
 bool mqtt_connected = false;
+
+// Threads
+pthread_t thread_mqtt, thread_weather, thread_uv, thread_solar_token,
+    thread_current_solar, thread_daily_solar, thread_monthly_solar,
+    thread_time_sync, thread_display_status,
+    thread_connectivity_manager;
 
 // Global variables
 struct tm timeinfo;
@@ -41,11 +48,8 @@ char statusMessageValue[CHAR_LEN];
 
 
 // Screen setting
-static uint32_t screenWidth = LCD_WIDTH;
-static uint32_t screenHeight = LCD_HEIGHT;
 static lv_display_t* disp = NULL;
 static lv_indev_t* mouse = NULL;
-static lv_color_t* disp_draw_buf;
 
 // Arrays of UI objects
 #define ROOM_COUNT 5
@@ -118,20 +122,6 @@ void setup() {
     // Start mosquitto network loop in a separate thread
     mosquitto_loop_start(mosq);
 
-    // Allocate display buffer
-    size_t bufferSize = sizeof(lv_color_t) * screenWidth * 10;
-
-    disp_draw_buf = (lv_color_t*)malloc(bufferSize);
-
-    // Create LVGL display
-    disp = lv_display_create(screenWidth, screenHeight);
-    if (!disp) {
-        while (1) {
-            usleep(100000);
-        }
-    }
-    lv_display_set_flush_cb(disp, my_disp_flush);
-    lv_display_set_buffers(disp, disp_draw_buf, NULL, bufferSize, LV_DISPLAY_RENDER_MODE_PARTIAL);
     ui_init();
 
     // Set initial UI values
@@ -203,7 +193,7 @@ void setup() {
 
     // Start tasks
     pthread_create(&thread_weather, NULL, get_weather_t, NULL);
-    pthread_create(&thread_uv, NULL, get_uv_t, NULL);
+    //pthread_create(&thread_uv, NULL, get_uv_t, NULL);
     pthread_create(&thread_solar_token, NULL, get_solar_token_t, NULL);
     pthread_create(&thread_daily_solar, NULL, get_daily_solar_t, NULL);
     pthread_create(&thread_monthly_solar, NULL, get_monthly_solar_t, NULL);
@@ -273,8 +263,9 @@ void loop() {
         lv_label_set_text(ui_FCConditions, weather.description);
         snprintf(tempString, CHAR_LEN, "Updated %s", weather.time_string);
         lv_label_set_text(ui_FCUpdateTime, tempString);
-        snprintf(tempString, CHAR_LEN, "Wind %2.0f km/h %s", weather.windSpeed, weather.windDir);
-        lv_label_set_text(ui_FCWindSpeed, tempString);
+        char windString[CHAR_LEN + 20];
+        snprintf(windString, sizeof(windString), "Wind %2.0f km/h %s", weather.windSpeed, weather.windDir);
+        lv_label_set_text(ui_FCWindSpeed, windString);
 
         lv_arc_set_value(ui_TempArcFC, weather.temperature);
 
@@ -355,7 +346,6 @@ void invalidateOldReadings() {
     if (time(NULL) > TIME_SYNC_THRESHOLD) {
         for (int i = 0; i < sizeof(readings) / sizeof(readings[0]); i++) {
             if ((time(NULL) > readings[i].lastMessageTime + (MAX_NO_MESSAGE_SEC))) {
-                printf("Invalidating reading %d\n", i);
                 readings[i].changeChar = CHAR_NO_MESSAGE;
                 snprintf(readings[i].output, 10, NO_READING);
                 readings[i].currentValue = 0.0;
@@ -426,4 +416,19 @@ void errorPublish(const char* messageBuffer) {
     
   
 }
+int main(int argc, char *argv[])
+{
+    (void)argc;
+    (void)argv;
+    
+    setup();
+    
+    while (1) {
+        loop();
+        usleep(5000);  // 5ms delay, adjust as needed
+    }
+    
+    return 0;
+}
+
 

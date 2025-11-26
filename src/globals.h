@@ -80,12 +80,6 @@ struct LogEntry {
     time_t timestamp;
 };
 
-// Threads
-pthread_t thread_mqtt, thread_weather, thread_uv, thread_solar_token,
-    thread_current_solar, thread_daily_solar, thread_monthly_solar,
-    thread_time_sync, thread_ota_check, thread_display_status,
-    thread_connectivity_manager;
-
 // main
 void pin_init();
 void setup_wifi();
