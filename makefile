@@ -20,7 +20,7 @@ SRC_DIR := src
 # Include directories
 INCLUDES := -I$(SRC_DIR) \
             -I$(SRC_DIR)/UI \
-            -I$(SRC_DIR)/lvgl
+            -isystem $(SRC_DIR)/lvgl
 
 # Libraries to link
 LDFLAGS := -lSDL2 \

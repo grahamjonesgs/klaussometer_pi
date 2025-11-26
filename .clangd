@@ -1,0 +1,4 @@
+If:
+  PathMatch: src/lvgl/.*
+Diagnostics:
+  Suppress: '*'
