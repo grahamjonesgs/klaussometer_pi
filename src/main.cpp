@@ -23,7 +23,7 @@ Arduino Core 0
 
 // Create network objects
 pthread_mutex_t mqttMutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t httpMutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t dataMutex = PTHREAD_MUTEX_INITIALIZER;
 struct mosquitto* mosq = NULL;
 bool mqtt_connected = false;
 volatile bool running = true;
@@ -210,91 +210,116 @@ void loop() {
     usleep(200000);
     lv_timer_handler(); // Run GUI
 
-    // Update values
+    // ===== Take snapshot of shared data under lock =====
+    Weather weather_copy;
+    UV uv_copy;
+    Solar solar_copy;
+    Readings readings_copy[sizeof(readings) / sizeof(readings[0])];
+    
+    pthread_mutex_lock(&dataMutex);
+    memcpy(&weather_copy, &weather, sizeof(Weather));
+    memcpy(&uv_copy, &uv, sizeof(UV));
+    memcpy(&solar_copy, &solar, sizeof(Solar));
+    memcpy(readings_copy, readings, sizeof(readings));
+    pthread_mutex_unlock(&dataMutex);
+    // ===== End snapshot =====
+
     for (unsigned char i = 0; i < ROOM_COUNT; ++i) {
-        lv_arc_set_value(*tempArcs[i], readings[i].currentValue);
-        lv_label_set_text(*tempLabels[i], readings[i].output);
-        if (readings[i].changeChar != CHAR_NO_MESSAGE) {
+        lv_arc_set_value(*tempArcs[i], readings_copy[i].currentValue);
+        lv_label_set_text(*tempLabels[i], readings_copy[i].output);
+        if (readings_copy[i].changeChar != CHAR_NO_MESSAGE) {
             lv_obj_clear_flag(*tempArcs[i], LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(*tempArcs[i], LV_OBJ_FLAG_HIDDEN);
         }
-        if (readings[i].changeChar == CHAR_NO_MESSAGE) {
+        if (readings_copy[i].changeChar == CHAR_NO_MESSAGE) {
             snprintf(tempString, CHAR_LEN, "%c", CHAR_SAME);
         } else {
-            snprintf(tempString, CHAR_LEN, "%c", readings[i].changeChar);
+            snprintf(tempString, CHAR_LEN, "%c", readings_copy[i].changeChar);
         }
         lv_label_set_text(*directionLabels[i], tempString);
-        lv_label_set_text(*humidityLabels[i], readings[i + ROOM_COUNT].output);
+        lv_label_set_text(*humidityLabels[i], readings_copy[i + ROOM_COUNT].output);
     }
 
-    // Battery updates
+    // Battery updates - use readings_copy
     for (unsigned char i = 0; i < ROOM_COUNT; ++i) {
-        getBatteryStatus(readings[i + 2 * ROOM_COUNT].currentValue, &batteryIcon, &batteryColour);
+        getBatteryStatus(readings_copy[i + 2 * ROOM_COUNT].currentValue, &batteryIcon, &batteryColour);
         snprintf(tempString, CHAR_LEN, "%c", batteryIcon);
         lv_label_set_text(*batteryLabels[i], tempString);
         lv_obj_set_style_text_color(*batteryLabels[i], batteryColour, LV_PART_MAIN);
     }
 
-    // Update UV
-    if (uv.updateTime > 0) {
+    // Update UV - use uv_copy and weather_copy
+    if (uv_copy.updateTime > 0) {
         lv_obj_clear_flag(ui_UVArc, LV_OBJ_FLAG_HIDDEN);
-        if (weather.isDay) {
-            snprintf(tempString, sizeof(tempString), "Updated %.238s", uv.time_string);
+        if (weather_copy.isDay) {
+            snprintf(tempString, sizeof(tempString), "Updated %.238s", uv_copy.time_string);
         } else {
             tempString[0] = '\0';
         }
         lv_label_set_text(ui_UVUpdateTime, tempString);
-        snprintf(tempString, CHAR_LEN, "%i", uv.index);
+        snprintf(tempString, CHAR_LEN, "%i", uv_copy.index);
         lv_label_set_text(ui_UVLabel, tempString);
-        lv_arc_set_value(ui_UVArc, uv.index * 10);
+        lv_arc_set_value(ui_UVArc, uv_copy.index * 10);
 
-        lv_obj_set_style_arc_color(ui_UVArc, lv_color_hex(uv_color(uv.index)),
-                                   LV_PART_INDICATOR | LV_STATE_DEFAULT); // Set arc to color
-        lv_obj_set_style_bg_color(ui_UVArc, lv_color_hex(uv_color(uv.index)),
-                                  LV_PART_KNOB | LV_STATE_DEFAULT); // Set arc to color
+        lv_obj_set_style_arc_color(ui_UVArc, lv_color_hex(uv_color(uv_copy.index)),
+                                   LV_PART_INDICATOR | LV_STATE_DEFAULT);
+        lv_obj_set_style_bg_color(ui_UVArc, lv_color_hex(uv_color(uv_copy.index)),
+                                  LV_PART_KNOB | LV_STATE_DEFAULT);
     }
 
-    // Update weather values
-    if (weather.updateTime > 0) {
-        lv_label_set_text(ui_FCConditions, weather.description);
-        snprintf(tempString, CHAR_LEN, "Updated %.238s", weather.time_string);
+    // Update weather values - use weather_copy
+    if (weather_copy.updateTime > 0) {
+        lv_label_set_text(ui_FCConditions, weather_copy.description);
+        snprintf(tempString, CHAR_LEN, "Updated %.238s", weather_copy.time_string);
         lv_label_set_text(ui_FCUpdateTime, tempString);
         char windString[CHAR_LEN + 20];
-        snprintf(windString, sizeof(windString), "Wind %2.0f km/h %s", weather.windSpeed, weather.windDir);
+        snprintf(windString, sizeof(windString), "Wind %2.0f km/h %s", weather_copy.windSpeed, weather_copy.windDir);
         lv_label_set_text(ui_FCWindSpeed, windString);
 
-        lv_arc_set_value(ui_TempArcFC, weather.temperature);
+        lv_arc_set_value(ui_TempArcFC, weather_copy.temperature);
 
-        snprintf(tempString, CHAR_LEN, "%2.0f", weather.temperature);
+        snprintf(tempString, CHAR_LEN, "%2.0f", weather_copy.temperature);
         lv_label_set_text(ui_TempLabelFC, tempString);
 
-        // Set min max if outside the expected values
-        if (weather.temperature < weather.minTemp) {
-            weather.minTemp = weather.temperature;
+        // Update min/max on the COPY first, then write back if changed
+        bool minmax_changed = false;
+        if (weather_copy.temperature < weather_copy.minTemp) {
+            weather_copy.minTemp = weather_copy.temperature;
+            minmax_changed = true;
         }
-        if (weather.temperature > weather.maxTemp) {
-            weather.maxTemp = weather.temperature;
+        if (weather_copy.temperature > weather_copy.maxTemp) {
+            weather_copy.maxTemp = weather_copy.temperature;
+            minmax_changed = true;
+        }
+        
+        // Write back min/max changes under lock
+        if (minmax_changed) {
+            pthread_mutex_lock(&dataMutex);
+            weather.minTemp = weather_copy.minTemp;
+            weather.maxTemp = weather_copy.maxTemp;
+            pthread_mutex_unlock(&dataMutex);
         }
     }
 
-    if (weather.updateTime > 0) {
-        snprintf(tempString, CHAR_LEN, "%2.0f°C", weather.minTemp);
+    if (weather_copy.updateTime > 0) {
+        snprintf(tempString, CHAR_LEN, "%2.0f°C", weather_copy.minTemp);
         lv_label_set_text(ui_FCMin, tempString);
-        snprintf(tempString, CHAR_LEN, "%2.0f°C", weather.maxTemp);
+        snprintf(tempString, CHAR_LEN, "%2.0f°C", weather_copy.maxTemp);
         lv_label_set_text(ui_FCMax, tempString);
         lv_obj_clear_flag(ui_TempArcFC, LV_OBJ_FLAG_HIDDEN);
-        lv_arc_set_range(ui_TempArcFC, weather.minTemp, weather.maxTemp);
+        lv_arc_set_range(ui_TempArcFC, weather_copy.minTemp, weather_copy.maxTemp);
     }
 
-    // Update solar values
-    set_solar_values();
-    if (time(NULL) - solar.currentUpdateTime > 2 * SOLAR_CURRENT_UPDATE_INTERVAL_SEC) {
+    // Update solar values - use solar_copy
+    set_solar_values(&solar_copy);  // Pass copy to function
+    
+    if (time(NULL) - solar_copy.currentUpdateTime > 2 * SOLAR_CURRENT_UPDATE_INTERVAL_SEC) {
         lv_obj_set_style_text_color(ui_SolarStatus, lv_color_hex(COLOR_RED), LV_PART_MAIN);
     } else {
         lv_obj_set_style_text_color(ui_SolarStatus, lv_color_hex(COLOR_GREEN), LV_PART_MAIN);
     }
-    if (time(NULL) - weather.updateTime > 2 * WEATHER_UPDATE_INTERVAL_SEC) {
+    if (time(NULL) - weather_copy.updateTime > 2 * WEATHER_UPDATE_INTERVAL_SEC) {
         lv_obj_set_style_text_color(ui_WeatherStatus, lv_color_hex(COLOR_RED), LV_PART_MAIN);
     } else {
         lv_obj_set_style_text_color(ui_WeatherStatus, lv_color_hex(COLOR_GREEN), LV_PART_MAIN);
@@ -316,7 +341,7 @@ void loop() {
     strftime(timeString, sizeof(timeString), "%H:%M:%S", &timeinfo);
     lv_label_set_text(ui_Time, timeString);
 
-    if (!weather.isDay) {
+    if (!weather_copy.isDay) {
         set_basic_text_color(lv_color_hex(COLOR_WHITE));
         lv_obj_set_style_bg_color(lv_scr_act(), lv_color_hex(COLOR_BLACK), LV_STATE_DEFAULT);
         lv_obj_set_style_border_color(ui_Container1, lv_color_hex(COLOR_WHITE), LV_STATE_DEFAULT);
@@ -331,11 +356,12 @@ void loop() {
     // Update status message
     lv_label_set_text(ui_StatusMessage, statusMessageValue);
 
-    // Invalidate readings if too old
+    // Invalidate readings if too old - needs lock since it modifies readings
     invalidateOldReadings();
 }
 
 void invalidateOldReadings() {
+    pthread_mutex_lock(&dataMutex);
     for (size_t i = 0; i < sizeof(readings) / sizeof(readings[0]); i++) {
         if ((time(NULL) > readings[i].lastMessageTime + (MAX_NO_MESSAGE_SEC))) {
             readings[i].changeChar = CHAR_NO_MESSAGE;
@@ -343,6 +369,7 @@ void invalidateOldReadings() {
             readings[i].currentValue = 0.0;
         }
     }
+    pthread_mutex_unlock(&dataMutex);
 }
 
 void getBatteryStatus(float batteryValue, char* iconCharacterPtr, lv_color_t* colorPtr) {

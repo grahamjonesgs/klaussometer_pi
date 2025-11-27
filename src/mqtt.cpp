@@ -4,6 +4,7 @@ extern struct mosquitto* mosq;
 extern pthread_mutex_t mqttMutex;
 extern Readings readings[];
 extern int numberOfReadings;
+extern pthread_mutex_t dataMutex;
 
 // Process received MQTT message
 void process_mqtt_message(const char* topic, char* payload, int payloadlen) {
@@ -31,7 +32,9 @@ void process_mqtt_message(const char* topic, char* payload, int payloadlen) {
     for (int i = 0; i < numberOfReadings; i++) {
         if (strcmp(topic, readings[i].topic) == 0) {
             if (readings[i].dataType == DATA_TEMPERATURE || readings[i].dataType == DATA_HUMIDITY || readings[i].dataType == DATA_BATTERY) {
+                pthread_mutex_lock(&dataMutex);
                 update_readings(recMessage, i, readings[i].dataType);
+                pthread_mutex_unlock(&dataMutex);
                 messageProcessed = true;
             }
             break;

@@ -16,8 +16,8 @@
 #include <unistd.h>
 
 typedef struct __attribute__((packed)) { // Array to hold the incoming measurement
-    const char description[CHAR_LEN];    // Currently set to 50 chars long
-    const char topic[CHAR_LEN];          // MQTT topic
+    char description[CHAR_LEN];    // Currently set to 50 chars long
+    char topic[CHAR_LEN];          // MQTT topic
     char output[CHAR_LEN];               // To be output to screen
     float currentValue;                  // Current value received
     float lastValue[STORED_READING];     // Defined that the zeroth element is the oldest
@@ -80,7 +80,6 @@ struct LogEntry {
 
 // main
 void pin_init();
-void set_solar_values();
 void getBatteryStatus(float batteryValue, char* iconCharacterPtr, lv_color_t* colorPtr);
 void* displayStatusMessages_t(void* pvParameters);
 void logAndPublish(const char* messageBuffer);
@@ -106,6 +105,7 @@ char* toLowercase(const char* source, char* buffer, size_t bufferSize);
 int uv_color(float UV);
 void format_integer_with_commas(long long num, char* out, size_t outSize);
 void set_basic_text_color(lv_color_t color);
+void set_solar_values(const Solar* solar);
 
 // APIs
 void* get_uv_t(void* pvParameters);

@@ -1,6 +1,7 @@
 #include "globals.h"
 
 extern Solar solar;
+extern pthread_mutex_t dataMutex;
 
 uint8_t calculateChecksum(const void* data_ptr, size_t size) {
     uint8_t sum = 0;
@@ -20,6 +21,7 @@ bool saveDataBlock(const char* filename, const void* data_ptr, size_t size) {
         return false;
     }
 
+    pthread_mutex_lock(&dataMutex);
     // 1. Prepare header
     DataHeader header;
     header.size = size;
@@ -32,6 +34,7 @@ bool saveDataBlock(const char* filename, const void* data_ptr, size_t size) {
         snprintf(log_message, sizeof(log_message), "Failed to write header to %s", filename);
         logAndPublish(log_message);
         fclose(dataFile);
+        pthread_mutex_unlock(&dataMutex);
         return false;
     }
 
@@ -43,8 +46,10 @@ bool saveDataBlock(const char* filename, const void* data_ptr, size_t size) {
         char log_message[CHAR_LEN];
         snprintf(log_message, sizeof(log_message), "Failed to write all data to %s. Wrote %zu of %zu bytes", filename, bytesWritten, size);
         logAndPublish(log_message);
+        pthread_mutex_unlock(&dataMutex);
         return false;
     }
+    pthread_mutex_unlock(&dataMutex);
 
     return true;
 }
@@ -81,9 +86,10 @@ bool loadDataBlock(const char* filename, void* data_ptr, size_t expected_size) {
     }
 
     // 3. Read the data block
+    pthread_mutex_lock(&dataMutex);
     size_t bytesRead = fread(data_ptr, 1, expected_size, dataFile);
     fclose(dataFile);
-
+    pthread_mutex_unlock(&dataMutex);
     if (bytesRead != expected_size) {
         char log_message[CHAR_LEN];
         snprintf(log_message, sizeof(log_message), "Failed to read all data from %s. Read %zu of %zu bytes", filename, bytesRead, expected_size);

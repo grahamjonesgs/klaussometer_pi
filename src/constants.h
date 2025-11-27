@@ -90,4 +90,6 @@ static const int COLOR_BLUE = 0x2095F6;
 #define NORMAL_LOG_BUFFER_SIZE 500
 #define ERROR_LOG_BUFFER_SIZE 50
 
+#define SOLAR_TOKEN_LENGTH 2048
+
 #endif // CONSTANTS_H

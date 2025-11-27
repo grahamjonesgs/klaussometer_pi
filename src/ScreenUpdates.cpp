@@ -6,38 +6,38 @@ extern Weather weather;
 extern Solar solar;
 
 // Set solar values in GUI
-void set_solar_values() {
+void set_solar_values(const Solar* solar) {
     char tempString[CHAR_LEN * 5];
     // Set screen values
-    if (solar.currentUpdateTime > 0) {
+    if (solar->currentUpdateTime > 0) {
         lv_obj_clear_flag(ui_BatteryArc, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(ui_SolarArc, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(ui_UsingArc, LV_OBJ_FLAG_HIDDEN);
-        lv_arc_set_value(ui_BatteryArc, solar.batteryCharge);
-        snprintf(tempString, CHAR_LEN, "%2.0f%%", solar.batteryCharge);
+        lv_arc_set_value(ui_BatteryArc, solar->batteryCharge);
+        snprintf(tempString, CHAR_LEN, "%2.0f%%", solar->batteryCharge);
         lv_label_set_text(ui_BatteryLabel, tempString);
 
-        lv_arc_set_value(ui_SolarArc, solar.solarPower * 10);
-        snprintf(tempString, CHAR_LEN, "%2.1fkW", solar.solarPower);
+        lv_arc_set_value(ui_SolarArc, solar->solarPower * 10);
+        snprintf(tempString, CHAR_LEN, "%2.1fkW", solar->solarPower);
         lv_label_set_text(ui_SolarLabel, tempString);
 
-        lv_arc_set_value(ui_UsingArc, solar.usingPower * 10);
-        snprintf(tempString, CHAR_LEN, "%2.1fkW", solar.usingPower);
+        lv_arc_set_value(ui_UsingArc, solar->usingPower * 10);
+        snprintf(tempString, CHAR_LEN, "%2.1fkW", solar->usingPower);
         lv_label_set_text(ui_UsingLabel, tempString);
 
         // Define and set value for remaining times
         // Avoid messages for very small discharging
 
-        if (solar.batteryPower > 0.1) {
-            snprintf(tempString, CHAR_LEN, "Discharging %2.1fkW", solar.batteryPower);
+        if (solar->batteryPower > 0.1) {
+            snprintf(tempString, CHAR_LEN, "Discharging %2.1fkW", solar->batteryPower);
             lv_label_set_text(ui_ChargingLabel, tempString);
 
-            float remain_hours = (solar.batteryCharge / 100.0 - BATTERY_MIN) * BATTERY_CAPACITY / solar.batteryPower;
+            float remain_hours = (solar->batteryCharge / 100.0 - BATTERY_MIN) * BATTERY_CAPACITY / solar->batteryPower;
             int remain_minutes = 60.0 * remain_hours;
             int remain_minutes_round = 10 * (round(remain_minutes / 10)); // Round to 10 mins
 
             struct tm ts_end;
-            time_t end_time = solar.currentUpdateTime + remain_minutes_round * 60; // find time of estimated end of battery charge
+            time_t end_time = solar->currentUpdateTime + remain_minutes_round * 60; // find time of estimated end of battery charge
             char time_buf_end[CHAR_LEN];
             localtime_r(&end_time, &ts_end);
             strftime(time_buf_end, sizeof(time_buf_end), "%H:%M:%S", &ts_end);
@@ -58,11 +58,11 @@ void set_solar_values() {
                                       LV_PART_KNOB | LV_STATE_DEFAULT); // Set arc to red
         } else {
             // Avoid messages for very small charging
-            if (solar.batteryPower < -0.1) {
-                snprintf(tempString, CHAR_LEN, "Charging %2.1fkW", -solar.batteryPower);
+            if (solar->batteryPower < -0.1) {
+                snprintf(tempString, CHAR_LEN, "Charging %2.1fkW", -solar->batteryPower);
                 lv_label_set_text(ui_ChargingLabel, tempString);
 
-                float remain_hours = -(0.99 - solar.batteryCharge / 100) * BATTERY_CAPACITY / solar.batteryPower;
+                float remain_hours = -(0.99 - solar->batteryCharge / 100) * BATTERY_CAPACITY / solar->batteryPower;
                 int remain_minutes = 60.0 * remain_hours;
                 int remain_minutes_round = 10 * (round(remain_minutes / 10));
 
@@ -101,25 +101,25 @@ void set_solar_values() {
         }
 
         // Define and set value for min and max solar
-        snprintf(tempString, CHAR_LEN, "Min %2.0f\nMax %2.0f", solar.today_battery_min, solar.today_battery_max);
+        snprintf(tempString, CHAR_LEN, "Min %2.0f\nMax %2.0f", solar->today_battery_min, solar->today_battery_max);
         lv_label_set_text(ui_SolarMinMax, tempString);
         // Set solar update times
         struct tm ts;
         char time_buf[CHAR_LEN];
-        time_t updateTime = solar.currentUpdateTime;
+        time_t updateTime = solar->currentUpdateTime;
         localtime_r(&updateTime, &ts);
         strftime(time_buf, sizeof(time_buf), "%H:%M:%S", &ts);
-        snprintf(tempString, sizeof(tempString), "Values as of %s\nReceived at %s", solar.time, time_buf);
+        snprintf(tempString, sizeof(tempString), "Values as of %s\nReceived at %s", solar->time, time_buf);
         lv_label_set_text(ui_AsofTimeLabel, tempString);
 
         // Set grid bought amounts
-        if (solar.today_buy != 0.0 || solar.month_buy != 0.0) {
+        if (solar->today_buy != 0.0 || solar->month_buy != 0.0) {
             char boughtTodayBuf[32];
             char boughtMonthBuf[32];
 
-            format_integer_with_commas((long long)floor(solar.today_buy * ELECTRICITY_PRICE), boughtTodayBuf, sizeof(boughtTodayBuf));
-            format_integer_with_commas((long long)floor(solar.month_buy * ELECTRICITY_PRICE), boughtMonthBuf, sizeof(boughtMonthBuf));
-            snprintf(tempString, CHAR_LEN, "Bought\nToday %.1fkWh - R%s\nThis month %.1fkWh - R%s", solar.today_buy, boughtTodayBuf, solar.month_buy, boughtMonthBuf);
+            format_integer_with_commas((long long)floor(solar->today_buy * ELECTRICITY_PRICE), boughtTodayBuf, sizeof(boughtTodayBuf));
+            format_integer_with_commas((long long)floor(solar->month_buy * ELECTRICITY_PRICE), boughtMonthBuf, sizeof(boughtMonthBuf));
+            snprintf(tempString, CHAR_LEN, "Bought\nToday %.1fkWh - R%s\nThis month %.1fkWh - R%s", solar->today_buy, boughtTodayBuf, solar->month_buy, boughtMonthBuf);
             lv_label_set_text(ui_GridBought, tempString);
         }
     }
