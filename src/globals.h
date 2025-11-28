@@ -17,6 +17,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <pwd.h>
+#include <mutex>
 
 typedef struct __attribute__((packed)) { // Array to hold the incoming measurement
     char description[CHAR_LEN];    // Currently set to 50 chars long

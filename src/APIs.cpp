@@ -1,14 +1,15 @@
 #include "globals.h"
 #include <curl/curl.h>
 #include <json-c/json.h>
+#include <mutex>
 
 extern Weather weather;
 extern UV uv;
 extern Solar solar;
-extern pthread_mutex_t dataMutex;
+extern std::mutex dataMutex;
 
 // Token management - private to this file
-static pthread_mutex_t tokenMutex = PTHREAD_MUTEX_INITIALIZER;
+static std::mutex tokenMutex;
 static char solar_token[SOLAR_TOKEN_LENGTH+1] = {0};
 
 // Buffer sizes
@@ -42,32 +43,28 @@ static size_t WriteMemoryCallback(void* contents, size_t size, size_t nmemb, voi
 
 // Token helper functions
 static bool get_solar_token_copy(char* dest, size_t dest_size) {
-    pthread_mutex_lock(&tokenMutex);
+    std::lock_guard<std::mutex> lock(tokenMutex);
     bool has_token = (strlen(solar_token) > 0);
     if (has_token) {
         strncpy(dest, solar_token, dest_size - 1);
         dest[dest_size - 1] = '\0';
     }
-    pthread_mutex_unlock(&tokenMutex);
     return has_token;
 }
 
 static void set_solar_token(const char* token) {
-    pthread_mutex_lock(&tokenMutex);
+    std::lock_guard<std::mutex> lock(tokenMutex);
     snprintf(solar_token, SOLAR_TOKEN_LENGTH, "bearer %s", token);
-    pthread_mutex_unlock(&tokenMutex);
 }
 
 static void clear_solar_token(void) {
-    pthread_mutex_lock(&tokenMutex);
+    std::lock_guard<std::mutex> lock(tokenMutex);
     solar_token[0] = '\0';
-    pthread_mutex_unlock(&tokenMutex);
 }
 
 static bool has_solar_token(void) {
-    pthread_mutex_lock(&tokenMutex);
+    std::lock_guard<std::mutex> lock(tokenMutex);
     bool has_token = (strlen(solar_token) > 0);
-    pthread_mutex_unlock(&tokenMutex);
     return has_token;
 }
 
@@ -112,10 +109,11 @@ void* get_uv_t(void* pvParameters) {
         time_t last_update;
 
         // Read shared state
-        pthread_mutex_lock(&dataMutex);
-        is_day = weather.isDay;
-        last_update = uv.updateTime;
-        pthread_mutex_unlock(&dataMutex);
+        {
+            std::lock_guard<std::mutex> lock(dataMutex);
+            is_day = weather.isDay;
+            last_update = uv.updateTime;
+        }
 
         if (is_day) {
             if (time(NULL) - last_update > UV_UPDATE_INTERVAL_SEC) {
@@ -148,12 +146,13 @@ void* get_uv_t(void* pvParameters) {
                                             char time_string[CHAR_LEN];
                                             get_current_time_string(time_string, sizeof(time_string));
 
-                                            pthread_mutex_lock(&dataMutex);
-                                            uv.index = uv_value;
-                                            uv.updateTime = time(NULL);
-                                            strncpy(uv.time_string, time_string, CHAR_LEN - 1);
-                                            uv.time_string[CHAR_LEN - 1] = '\0';
-                                            pthread_mutex_unlock(&dataMutex);
+                                            {
+                                                std::lock_guard<std::mutex> lock(dataMutex);
+                                                uv.index = uv_value;
+                                                uv.updateTime = time(NULL);
+                                                strncpy(uv.time_string, time_string, CHAR_LEN - 1);
+                                                uv.time_string[CHAR_LEN - 1] = '\0';
+                                            }
 
                                             logAndPublish("UV updated");
                                             saveDataBlock(UV_DATA_FILENAME, &uv, sizeof(uv));
@@ -163,9 +162,10 @@ void* get_uv_t(void* pvParameters) {
                                 json_object_put(root);
                             } else {
                                 logAndPublish("UV update failed: JSON parse error");
-                                pthread_mutex_lock(&dataMutex);
-                                uv.updateTime = time(NULL);
-                                pthread_mutex_unlock(&dataMutex);
+                                {
+                                    std::lock_guard<std::mutex> lock(dataMutex);
+                                    uv.updateTime = time(NULL);
+                                }
                             }
                         } else {
                             char log_message[CHAR_LEN];
@@ -189,21 +189,23 @@ void* get_uv_t(void* pvParameters) {
         } else {
             // Night time - set UV to 0
             time_t weather_update;
-            pthread_mutex_lock(&dataMutex);
-            weather_update = weather.updateTime;
-            pthread_mutex_unlock(&dataMutex);
+            {
+                std::lock_guard<std::mutex> lock(dataMutex);
+                weather_update = weather.updateTime;
+            }
 
             char time_string[CHAR_LEN];
             get_current_time_string(time_string, sizeof(time_string));
 
-            pthread_mutex_lock(&dataMutex);
-            uv.index = 0.0;
-            if (weather_update > 0) {
-                uv.updateTime = time(NULL);
+            {
+                std::lock_guard<std::mutex> lock(dataMutex);
+                uv.index = 0.0;
+                if (weather_update > 0) {
+                    uv.updateTime = time(NULL);
+                }
+                strncpy(uv.time_string, time_string, CHAR_LEN - 1);
+                uv.time_string[CHAR_LEN - 1] = '\0';
             }
-            strncpy(uv.time_string, time_string, CHAR_LEN - 1);
-            uv.time_string[CHAR_LEN - 1] = '\0';
-            pthread_mutex_unlock(&dataMutex);
 
             saveDataBlock(UV_DATA_FILENAME, &uv, sizeof(uv));
         }
@@ -217,9 +219,10 @@ void* get_weather_t(void* pvParameters) {
 
     while (true) {
         time_t last_update;
-        pthread_mutex_lock(&dataMutex);
-        last_update = weather.updateTime;
-        pthread_mutex_unlock(&dataMutex);
+        {
+            std::lock_guard<std::mutex> lock(dataMutex);
+            last_update = weather.updateTime;
+        }
 
         if (time(NULL) - last_update > WEATHER_UPDATE_INTERVAL_SEC) {
             char url_buffer[URL_BUFFER_SIZE];
@@ -283,18 +286,19 @@ void* get_weather_t(void* pvParameters) {
                                     char time_string[CHAR_LEN];
                                     get_current_time_string(time_string, sizeof(time_string));
 
-                                    pthread_mutex_lock(&dataMutex);
-                                    weather.temperature = weatherTemperature;
-                                    weather.windSpeed = weatherWindSpeed;
-                                    weather.maxTemp = weatherMaxTemp;
-                                    weather.minTemp = weatherMinTemp;
-                                    weather.isDay = weatherIsDay;
-                                    snprintf(weather.description, CHAR_LEN, "%s", description);
-                                    snprintf(weather.windDir, CHAR_LEN, "%s", windDir);
-                                    weather.updateTime = time(NULL);
-                                    strncpy(weather.time_string, time_string, CHAR_LEN - 1);
-                                    weather.time_string[CHAR_LEN - 1] = '\0';
-                                    pthread_mutex_unlock(&dataMutex);
+                                    {
+                                        std::lock_guard<std::mutex> lock(dataMutex);
+                                        weather.temperature = weatherTemperature;
+                                        weather.windSpeed = weatherWindSpeed;
+                                        weather.maxTemp = weatherMaxTemp;
+                                        weather.minTemp = weatherMinTemp;
+                                        weather.isDay = weatherIsDay;
+                                        snprintf(weather.description, CHAR_LEN, "%s", description);
+                                        snprintf(weather.windDir, CHAR_LEN, "%s", windDir);
+                                        weather.updateTime = time(NULL);
+                                        strncpy(weather.time_string, time_string, CHAR_LEN - 1);
+                                        weather.time_string[CHAR_LEN - 1] = '\0';
+                                    }
 
                                     logAndPublish("Weather updated");
                                     saveDataBlock(WEATHER_DATA_FILENAME, &weather, sizeof(weather));
@@ -504,9 +508,10 @@ void* get_current_solar_t(void* pvParameters) {
 
     while (true) {
         time_t last_update;
-        pthread_mutex_lock(&dataMutex);
-        last_update = solar.currentUpdateTime;
-        pthread_mutex_unlock(&dataMutex);
+        {
+            std::lock_guard<std::mutex> lock(dataMutex);
+            last_update = solar.currentUpdateTime;
+        }
 
         if (time(NULL) - last_update > SOLAR_CURRENT_UPDATE_INTERVAL_SEC) {
             char local_token[SOLAR_TOKEN_LENGTH];
@@ -578,15 +583,16 @@ void* get_current_solar_t(void* pvParameters) {
                                         localtime_r(&rec_time, &ts);
                                         strftime(time_buf, sizeof(time_buf), "%H:%M:%S", &ts);
 
-                                        pthread_mutex_lock(&dataMutex);
-                                        solar.currentUpdateTime = time(NULL);
-                                        solar.solarPower = rec_solarPower / 1000;
-                                        solar.batteryPower = rec_batteryPower / 1000;
-                                        solar.usingPower = rec_usingPower / 1000;
-                                        solar.batteryCharge = rec_batteryCharge;
-                                        solar.gridPower = rec_gridPower / 1000;
-                                        snprintf(solar.time, CHAR_LEN, "%s", time_buf);
-                                        pthread_mutex_unlock(&dataMutex);
+                                        {
+                                            std::lock_guard<std::mutex> lock(dataMutex);
+                                            solar.currentUpdateTime = time(NULL);
+                                            solar.solarPower = rec_solarPower / 1000;
+                                            solar.batteryPower = rec_batteryPower / 1000;
+                                            solar.usingPower = rec_usingPower / 1000;
+                                            solar.batteryCharge = rec_batteryCharge;
+                                            solar.gridPower = rec_gridPower / 1000;
+                                            snprintf(solar.time, CHAR_LEN, "%s", time_buf);
+                                        }
 
                                         logAndPublish("Solar status updated");
                                         saveDataBlock(SOLAR_DATA_FILENAME, &solar, sizeof(solar));
@@ -641,9 +647,10 @@ void* get_daily_solar_t(void* pvParameters) {
 
     while (true) {
         time_t last_update;
-        pthread_mutex_lock(&dataMutex);
-        last_update = solar.dailyUpdateTime;
-        pthread_mutex_unlock(&dataMutex);
+        {
+            std::lock_guard<std::mutex> lock(dataMutex);
+            last_update = solar.dailyUpdateTime;
+        }
 
         if (time(NULL) - last_update > SOLAR_DAILY_UPDATE_INTERVAL_SEC) {
             char local_token[SOLAR_TOKEN_LENGTH];
@@ -706,10 +713,11 @@ void* get_daily_solar_t(void* pvParameters) {
                                             if (json_object_object_get_ex(first_item, "buyValue", &buy_value_obj)) {
                                                 float today_buy = json_object_get_double(buy_value_obj);
 
-                                                pthread_mutex_lock(&dataMutex);
-                                                solar.today_buy = today_buy;
-                                                solar.dailyUpdateTime = time(NULL);
-                                                pthread_mutex_unlock(&dataMutex);
+                                                {
+                                                    std::lock_guard<std::mutex> lock(dataMutex);
+                                                    solar.today_buy = today_buy;
+                                                    solar.dailyUpdateTime = time(NULL);
+                                                }
 
                                                 logAndPublish("Solar today's buy value updated");
                                                 saveDataBlock(SOLAR_DATA_FILENAME, &solar, sizeof(solar));
@@ -757,9 +765,10 @@ void* get_monthly_solar_t(void* pvParameters) {
 
     while (true) {
         time_t last_update;
-        pthread_mutex_lock(&dataMutex);
-        last_update = solar.monthlyUpdateTime;
-        pthread_mutex_unlock(&dataMutex);
+        {
+            std::lock_guard<std::mutex> lock(dataMutex);
+            last_update = solar.monthlyUpdateTime;
+        }
 
         if (time(NULL) - last_update > SOLAR_MONTHLY_UPDATE_INTERVAL_SEC) {
             char local_token[SOLAR_TOKEN_LENGTH];
@@ -822,10 +831,11 @@ void* get_monthly_solar_t(void* pvParameters) {
                                             if (json_object_object_get_ex(first_item, "buyValue", &buy_value_obj)) {
                                                 float month_buy = json_object_get_double(buy_value_obj);
 
-                                                pthread_mutex_lock(&dataMutex);
-                                                solar.month_buy = month_buy;
-                                                solar.monthlyUpdateTime = time(NULL);
-                                                pthread_mutex_unlock(&dataMutex);
+                                                {
+                                                    std::lock_guard<std::mutex> lock(dataMutex);
+                                                    solar.month_buy = month_buy;
+                                                    solar.monthlyUpdateTime = time(NULL);
+                                                }
 
                                                 logAndPublish("Solar month's buy value updated");
                                                 saveDataBlock(SOLAR_DATA_FILENAME, &solar, sizeof(solar));

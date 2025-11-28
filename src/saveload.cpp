@@ -1,7 +1,8 @@
 #include "globals.h"
+#include <mutex>
 
 extern Solar solar;
-extern pthread_mutex_t dataMutex;
+extern std::mutex dataMutex;
 static char dataDirectory[512] = {0};
 
 uint8_t calculateChecksum(const void* data_ptr, size_t size) {
@@ -16,44 +17,59 @@ uint8_t calculateChecksum(const void* data_ptr, size_t size) {
 bool saveDataBlock(const char* filename, const void* data_ptr, size_t size) {
     char filepath[512];
     getDataFilePath(filename, filepath, sizeof(filepath));
-    
+
+    // Allocate temporary buffer for data copy
+    void* buffer = malloc(size);
+    if (!buffer) {
+        char log_message[CHAR_LEN];
+        snprintf(log_message, sizeof(log_message), "Failed to allocate memory for %s", filename);
+        logAndPublish(log_message);
+        return false;
+    }
+
+    // Copy data under lock (fast operation)
+    {
+        std::lock_guard<std::mutex> lock(dataMutex);
+        memcpy(buffer, data_ptr, size);
+    }
+
+    // Prepare header (no lock needed, working with local buffer)
+    DataHeader header;
+    header.size = size;
+    header.checksum = calculateChecksum(buffer, size);
+
+    // Open file and write (no lock needed - all I/O outside critical section)
     FILE* dataFile = fopen(filepath, "wb");
     if (!dataFile) {
         char log_message[CHAR_LEN];
         snprintf(log_message, sizeof(log_message), "Error opening file %s for writing", filename);
         logAndPublish(log_message);
+        free(buffer);
         return false;
     }
 
-    pthread_mutex_lock(&dataMutex);
-    // 1. Prepare header
-    DataHeader header;
-    header.size = size;
-    header.checksum = calculateChecksum(data_ptr, size);
-
-    // 2. Write header
+    // Write header
     size_t headerWritten = fwrite(&header, 1, sizeof(DataHeader), dataFile);
     if (headerWritten != sizeof(DataHeader)) {
         char log_message[CHAR_LEN];
         snprintf(log_message, sizeof(log_message), "Failed to write header to %s", filename);
         logAndPublish(log_message);
         fclose(dataFile);
-        pthread_mutex_unlock(&dataMutex);
+        free(buffer);
         return false;
     }
 
-    // 3. Write data
-    size_t bytesWritten = fwrite(data_ptr, 1, size, dataFile);
+    // Write data from buffer
+    size_t bytesWritten = fwrite(buffer, 1, size, dataFile);
     fclose(dataFile);
+    free(buffer);
 
     if (bytesWritten != size) {
         char log_message[CHAR_LEN];
         snprintf(log_message, sizeof(log_message), "Failed to write all data to %s. Wrote %zu of %zu bytes", filename, bytesWritten, size);
         logAndPublish(log_message);
-        pthread_mutex_unlock(&dataMutex);
         return false;
     }
-    pthread_mutex_unlock(&dataMutex);
 
     return true;
 }
@@ -61,7 +77,7 @@ bool saveDataBlock(const char* filename, const void* data_ptr, size_t size) {
 bool loadDataBlock(const char* filename, void* data_ptr, size_t expected_size) {
    char filepath[512];
     getDataFilePath(filename, filepath, sizeof(filepath));
-    
+
     FILE* dataFile = fopen(filepath, "rb");
     printf("Loading data block from %s\n", filepath);
     if (!dataFile) {
@@ -92,28 +108,45 @@ bool loadDataBlock(const char* filename, void* data_ptr, size_t expected_size) {
         return false;
     }
 
-    // 3. Read the data block
-    pthread_mutex_lock(&dataMutex);
-    size_t bytesRead = fread(data_ptr, 1, expected_size, dataFile);
+    // 3. Allocate temporary buffer and read data (no lock during I/O)
+    void* buffer = malloc(expected_size);
+    if (!buffer) {
+        char log_message[CHAR_LEN];
+        snprintf(log_message, sizeof(log_message), "Failed to allocate memory for %s", filename);
+        logAndPublish(log_message);
+        fclose(dataFile);
+        return false;
+    }
+
+    size_t bytesRead = fread(buffer, 1, expected_size, dataFile);
     fclose(dataFile);
-    pthread_mutex_unlock(&dataMutex);
+
     if (bytesRead != expected_size) {
         char log_message[CHAR_LEN];
         snprintf(log_message, sizeof(log_message), "Failed to read all data from %s. Read %zu of %zu bytes", filename, bytesRead, expected_size);
         logAndPublish(log_message);
+        free(buffer);
         return false;
     }
 
-    // 4. Verify checksum
-    uint8_t calculated = calculateChecksum(data_ptr, expected_size);
+    // 4. Verify checksum (working with local buffer, no lock needed)
+    uint8_t calculated = calculateChecksum(buffer, expected_size);
 
     if (header.checksum != calculated) {
         char log_message[CHAR_LEN];
         snprintf(log_message, sizeof(log_message), "Checksum failed for %s! Stored: 0x%02X, Calculated: 0x%02X", filename, header.checksum, calculated);
         logAndPublish(log_message);
+        free(buffer);
         return false;
     }
 
+    // 5. Copy validated data to destination under lock (fast operation)
+    {
+        std::lock_guard<std::mutex> lock(dataMutex);
+        memcpy(data_ptr, buffer, expected_size);
+    }
+
+    free(buffer);
     return true;
 }
 

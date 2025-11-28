@@ -22,8 +22,8 @@ Arduino Core 0
 #include <signal.h>
 
 // Create network objects
-pthread_mutex_t mqttMutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t dataMutex = PTHREAD_MUTEX_INITIALIZER;
+std::mutex mqttMutex;
+std::mutex dataMutex;
 struct mosquitto* mosq = NULL;
 bool mqtt_connected = false;
 volatile bool running = true;
@@ -218,13 +218,14 @@ void loop() {
     UV uv_copy;
     Solar solar_copy;
     Readings readings_copy[sizeof(readings) / sizeof(readings[0])];
-    
-    pthread_mutex_lock(&dataMutex);
-    memcpy(&weather_copy, &weather, sizeof(Weather));
-    memcpy(&uv_copy, &uv, sizeof(UV));
-    memcpy(&solar_copy, &solar, sizeof(Solar));
-    memcpy(readings_copy, readings, sizeof(readings));
-    pthread_mutex_unlock(&dataMutex);
+
+    {
+        std::lock_guard<std::mutex> lock(dataMutex);
+        memcpy(&weather_copy, &weather, sizeof(Weather));
+        memcpy(&uv_copy, &uv, sizeof(UV));
+        memcpy(&solar_copy, &solar, sizeof(Solar));
+        memcpy(readings_copy, readings, sizeof(readings));
+    }
     // ===== End snapshot =====
 
     for (unsigned char i = 0; i < ROOM_COUNT; ++i) {
@@ -298,10 +299,9 @@ void loop() {
         
         // Write back min/max changes under lock
         if (minmax_changed) {
-            pthread_mutex_lock(&dataMutex);
+            std::lock_guard<std::mutex> lock(dataMutex);
             weather.minTemp = weather_copy.minTemp;
             weather.maxTemp = weather_copy.maxTemp;
-            pthread_mutex_unlock(&dataMutex);
         }
     }
 
@@ -364,7 +364,7 @@ void loop() {
 }
 
 void invalidateOldReadings() {
-    pthread_mutex_lock(&dataMutex);
+    std::lock_guard<std::mutex> lock(dataMutex);
     for (size_t i = 0; i < sizeof(readings) / sizeof(readings[0]); i++) {
         if ((time(NULL) > readings[i].lastMessageTime + (MAX_NO_MESSAGE_SEC))) {
             readings[i].changeChar = CHAR_NO_MESSAGE;
@@ -372,7 +372,6 @@ void invalidateOldReadings() {
             readings[i].currentValue = 0.0;
         }
     }
-    pthread_mutex_unlock(&dataMutex);
 }
 
 void getBatteryStatus(float batteryValue, char* iconCharacterPtr, lv_color_t* colorPtr) {
