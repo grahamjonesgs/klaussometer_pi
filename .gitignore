@@ -1,5 +1,7 @@
 src/config.h
 build
+build/*
 SL/backup
 SL/autosave
 *.bin
+*.o

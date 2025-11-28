@@ -16,13 +16,11 @@ Arduino Core 0
 #include <SDL2/SDL.h>
 #include <chrono>
 #include <condition_variable>
-#include <mutex>
 #include <queue>
 #include <thread>
 #include <signal.h>
 
 // Create network objects
-std::mutex mqttMutex;
 std::mutex dataMutex;
 struct mosquitto* mosq = NULL;
 bool mqtt_connected = false;

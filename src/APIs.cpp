@@ -1,7 +1,6 @@
 #include "globals.h"
 #include <curl/curl.h>
 #include <json-c/json.h>
-#include <mutex>
 
 extern Weather weather;
 extern UV uv;

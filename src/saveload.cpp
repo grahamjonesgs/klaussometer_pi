@@ -1,5 +1,4 @@
 #include "globals.h"
-#include <mutex>
 
 extern Solar solar;
 extern std::mutex dataMutex;

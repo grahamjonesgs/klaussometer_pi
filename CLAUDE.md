@@ -57,9 +57,9 @@ The application uses pthreads for concurrent operations with the following threa
 
 ### Data Synchronization
 
-- **mqttMutex**: Protects MQTT connection state (std::mutex)
 - **dataMutex**: Protects shared data structures (weather, uv, solar, readings) (std::mutex)
 - **statusQueueMutex**: Protects the status message queue (std::mutex)
+- **tokenMutex** (static in APIs.cpp): Protects solar API authentication token (std::mutex)
 
 All mutex operations use std::lock_guard<std::mutex> for RAII-based locking, which automatically unlocks when going out of scope and provides exception safety. Always acquire locks in consistent order to prevent deadlocks.
 

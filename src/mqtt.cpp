@@ -1,8 +1,6 @@
 #include "globals.h"
-#include <mutex>
 
 extern struct mosquitto* mosq;
-extern std::mutex mqttMutex;
 extern Readings readings[];
 extern int numberOfReadings;
 extern std::mutex dataMutex;
