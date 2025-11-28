@@ -2,6 +2,7 @@
 
 extern Solar solar;
 extern pthread_mutex_t dataMutex;
+static char dataDirectory[512] = {0};
 
 uint8_t calculateChecksum(const void* data_ptr, size_t size) {
     uint8_t sum = 0;
@@ -13,7 +14,10 @@ uint8_t calculateChecksum(const void* data_ptr, size_t size) {
 }
 
 bool saveDataBlock(const char* filename, const void* data_ptr, size_t size) {
-    FILE* dataFile = fopen(filename, "wb");
+    char filepath[512];
+    getDataFilePath(filename, filepath, sizeof(filepath));
+    
+    FILE* dataFile = fopen(filepath, "wb");
     if (!dataFile) {
         char log_message[CHAR_LEN];
         snprintf(log_message, sizeof(log_message), "Error opening file %s for writing", filename);
@@ -55,8 +59,11 @@ bool saveDataBlock(const char* filename, const void* data_ptr, size_t size) {
 }
 
 bool loadDataBlock(const char* filename, void* data_ptr, size_t expected_size) {
-    FILE* dataFile = fopen(filename, "rb");
-    printf("Loading data block from %s\n", filename);
+   char filepath[512];
+    getDataFilePath(filename, filepath, sizeof(filepath));
+    
+    FILE* dataFile = fopen(filepath, "rb");
+    printf("Loading data block from %s\n", filepath);
     if (!dataFile) {
         char log_message[CHAR_LEN];
         snprintf(log_message, sizeof(log_message), "Error opening file %s for reading", filename);
@@ -108,4 +115,42 @@ bool loadDataBlock(const char* filename, void* data_ptr, size_t expected_size) {
     }
 
     return true;
+}
+
+bool initDataDirectory() {
+    // Get home directory
+    const char* home = getenv("HOME");
+    if (!home) {
+        // Fallback to passwd entry
+        struct passwd* pw = getpwuid(getuid());
+        if (pw) {
+            home = pw->pw_dir;
+        }
+    }
+    
+    if (!home) {
+        logAndPublish("Could not determine home directory");
+        return false;
+    }
+    
+    // Build path: ~/.klaussometer/
+    snprintf(dataDirectory, sizeof(dataDirectory), "%s/.klaussometer", home);
+    
+    // Create directory if it doesn't exist
+    struct stat st;
+    if (stat(dataDirectory, &st) == -1) {
+        if (mkdir(dataDirectory, 0755) == -1) {
+            char log_message[CHAR_LEN];
+            snprintf(log_message, sizeof(log_message), "Failed to create directory %s", dataDirectory);
+            logAndPublish(log_message);
+            return false;
+        }
+        logAndPublish("Created data directory");
+    }
+    
+    return true;
+}
+
+void getDataFilePath(const char* filename, char* fullpath, size_t fullpath_size) {
+    snprintf(fullpath, fullpath_size, "%s/%s", dataDirectory, filename);
 }

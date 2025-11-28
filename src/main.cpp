@@ -64,6 +64,9 @@ void setup() {
     // delay one second to enabling monitoring
     snprintf(chip_id, CHAR_LEN, "Pi5");
     printf("Starting Klaussometer 4.0 Display %s\n", chip_id);
+      if (!initDataDirectory()) {
+        printf("Warning: Could not initialize data directory, using current directory\n");
+    }
 
     // Initialize LVGL and SDL display
     lv_init();

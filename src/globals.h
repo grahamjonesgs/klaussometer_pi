@@ -14,6 +14,9 @@
 #include <pthread.h>
 #include <string>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <pwd.h>
 
 typedef struct __attribute__((packed)) { // Array to hold the incoming measurement
     char description[CHAR_LEN];    // Currently set to 50 chars long
@@ -121,5 +124,7 @@ const char* wmoToText(int code, bool isDay);
 uint8_t calculateChecksum(const void* data_ptr, size_t size);
 bool saveDataBlock(const char* filename, const void* data_ptr, size_t size);
 bool loadDataBlock(const char* filename, void* data_ptr, size_t expected_size);
+bool initDataDirectory();
+void getDataFilePath(const char* filename, char* fullpath, size_t fullpath_size);
 
 #endif // GLOBALS_H
