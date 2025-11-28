@@ -14,10 +14,8 @@ Arduino Core 0
 
 #include "globals.h"
 #include <SDL2/SDL.h>
-#include <chrono>
 #include <condition_variable>
 #include <queue>
-#include <thread>
 #include <signal.h>
 
 // Create network objects
@@ -410,7 +408,7 @@ void* displayStatusMessages_t(void* pvParameters) {
         }
         snprintf(statusMessageValue, CHAR_LEN, "%s", receivedMsg.text);
         // Wait for the specified duration before clearing the message.
-        std::this_thread::sleep_for(std::chrono::seconds(receivedMsg.duration_s));
+        usleep(receivedMsg.duration_s * 1000000);
         // Clear the label after the duration has passed.
         statusMessageValue[0] = '\0';
     }
